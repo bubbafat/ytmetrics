@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Daily launchd job for ytmetrics. Setup:
+    1. Edit the absolute paths below:
+         - the `uv` binary path (find it with `which uv`)
+         - WorkingDirectory = your checkout (the dir holding config.toml)
+    2. cp this file to ~/Library/LaunchAgents/com.ytmetrics.daily.plist  (drop ".example")
+    3. launchctl load ~/Library/LaunchAgents/com.ytmetrics.daily.plist
+    4. launchctl start com.ytmetrics.daily   # run once now to verify
+  Runs headless from the stored refresh token; run `ytmetrics list-channels` once first.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ytmetrics.daily</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/uv</string>
+    <string>run</string>
+    <string>ytmetrics</string>
+    <string>pull</string>
+    <string>--days</string>
+    <string>7</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/robert/src/ytmetrics</string>
+
+  <!-- Run every day at 06:30 local time. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>6</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/robert/src/ytmetrics/logs/launchd.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/robert/src/ytmetrics/logs/launchd.err</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

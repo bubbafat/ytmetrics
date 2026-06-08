@@ -1,0 +1,30 @@
+# Secrets — never commit
+secrets/
+config.toml
+token*.json
+client_secret*.json
+
+# Local data & operational artifacts
+*.db
+*.db-wal
+*.db-shm
+*.prerestore
+logs/
+backups/
+
+# But DO commit the seeded sample database used for offline analysis/tests
+!sample/ytmetrics.sample.db
+
+# Single-instance run lock
+*.lock
+
+# Python / tooling
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+build/
+*.egg-info/

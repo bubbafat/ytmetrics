@@ -1,0 +1,16 @@
+[
+  {
+    "video_id": "vodAAAAAAAA",
+    "title": "Long-form: Getting Started",
+    "published_at": "2026-05-20T15:00:00Z",
+    "duration_seconds": 725,
+    "privacy_status": "public"
+  },
+  {
+    "video_id": "shrtBBBBBBB",
+    "title": "Short: Quick Tip",
+    "published_at": "2026-06-01T12:00:00Z",
+    "duration_seconds": 45,
+    "privacy_status": "public"
+  }
+]
