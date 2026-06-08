@@ -24,23 +24,21 @@ cp config.example.toml config.toml
 
 ## One-time Google setup (manual — the tool can't click these for you)
 
-1. Create a Google Cloud project. **You do not need to enable billing** — these APIs are
-   free and quota-limited, so leaving billing off makes the cost ceiling provably $0.
-2. Enable **YouTube Analytics API** and **YouTube Data API v3**.
-3. Configure the OAuth consent screen (User type: External; add your own Google account as
-   a Test user).
-4. Create an **OAuth client ID → Application type: Desktop app**, download the JSON, and
-   save it where `client_secret` in `config.toml` points (default
-   `secrets/client_secret.json`).
-5. Authorize once (opens a browser) and discover your channel id:
-   ```bash
-   uv run ytmetrics list-channels
-   ```
-   Put the `UC…` id into `config.toml` (or leave `channel_id = "mine"` for the default
-   channel). Verify everything with `uv run ytmetrics doctor --live`.
+You'll create a free Google Cloud project, enable the YouTube Analytics + Data APIs, make a
+**Desktop OAuth client**, and authorize **as the account that owns the channel**. Then:
 
-Scopes requested are read-only: `yt-analytics.readonly`, `youtube.readonly`, and
-`yt-analytics-monetary.readonly` only when `include_revenue = true`.
+```bash
+uv run ytmetrics list-channels    # authorizes in a browser, prints your channel id
+uv run ytmetrics doctor --live    # confirms the whole chain works
+```
+
+No billing is required (these APIs are free), and the scopes are read-only:
+`yt-analytics.readonly`, `youtube.readonly`, and `yt-analytics-monetary.readonly` only when
+`include_revenue = true`.
+
+**→ Full click-by-click walkthrough (with the exact links): [SETUP.md](SETUP.md).** It
+covers which Google account to use, the consent-screen/test-user steps, downloading the
+client JSON, and troubleshooting.
 
 ## Usage
 
