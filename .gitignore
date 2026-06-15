@@ -18,6 +18,12 @@ backups/
 # Single-instance run lock
 *.lock
 
+# FUSE orphaned-handle artifacts (appear when a mounted file is held open)
+.fuse_hidden*
+
+# Local agent/editor config
+.claude/
+
 # Python / tooling
 .venv/
 __pycache__/

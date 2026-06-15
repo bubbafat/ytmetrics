@@ -13,6 +13,7 @@ import stat
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -140,10 +141,26 @@ def get_credentials(
         return creds
 
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        _register_token_secret(creds)
-        store.save(creds.to_json())
-        return creds
+        try:
+            creds.refresh(Request())
+            _register_token_secret(creds)
+            store.save(creds.to_json())
+            return creds
+        except RefreshError as exc:
+            # Refresh token expired or revoked (e.g. Google project still in
+            # "Testing" expires refresh tokens after 7 days). Fall through to a
+            # fresh interactive authorization instead of crashing.
+            if not interactive:
+                raise AuthError(
+                    f"stored credentials for channel {channel.name!r} could not be "
+                    f"refreshed ({exc}). Run `ytmetrics list-channels` to re-authorize."
+                ) from exc
+            get_logger().warning(
+                "refresh failed for channel %r (%s); re-authorizing in browser",
+                channel.name,
+                exc,
+            )
+            creds = None
 
     if not interactive:
         raise AuthError(
