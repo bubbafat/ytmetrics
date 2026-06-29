@@ -19,6 +19,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from .freshness import stale_html_banner, stale_text_banner
 from .timeutil import today_pt
 
 # Anomaly thresholds (locked) ------------------------------------------------------
@@ -104,7 +105,7 @@ def _series(c, days: list[str]) -> tuple[list[int], list[float]]:
 
 
 # --- the computation ---------------------------------------------------------------
-def compute(db_path: str | Path, *, today=None) -> dict:
+def compute(db_path: str | Path, *, today=None, warn_days: int = 3) -> dict:
     c = sqlite3.connect(str(db_path))
     c.row_factory = sqlite3.Row
     try:
@@ -113,6 +114,7 @@ def compute(db_path: str | Path, *, today=None) -> dict:
             raise RuntimeError("no channel_daily data in db — run `ytmetrics pull` first")
         latest_d = datetime.strptime(latest, "%Y-%m-%d").date()
         today_d = today or today_pt()
+        days_behind = (today_d - latest_d).days
         prev = (latest_d - timedelta(days=1)).isoformat()
 
         def _est(day_iso: str) -> bool:
@@ -183,6 +185,8 @@ def compute(db_path: str | Path, *, today=None) -> dict:
         digest = {
             "latest_date": latest,
             "latest_estimated": _est(latest),
+            "days_behind": days_behind,
+            "stale": days_behind > warn_days,
             "recent_days": recent_days,
             "prev_date": prev,
             "baseline_days": len(present),
@@ -211,6 +215,7 @@ def compute(db_path: str | Path, *, today=None) -> dict:
             "status": status,
         }
         digest["headline"] = _headline(digest)
+        digest["alert_tone"] = _alert_tone(digest)
         return digest
     finally:
         c.close()
@@ -304,6 +309,24 @@ def _headline(d: dict) -> str:
         t = d["traffic"]
         return f"{_src_label(t['source'])} up {t['multiple']:.1f}× vs norm"
     return "normal day"
+
+
+def _alert_tone(d: dict) -> str:
+    """'good' (a positive surge — show green) or 'bad' (concerning — show yellow) for the
+    chosen headline. Mirrors ``_headline``'s priority so the icon matches the words."""
+    if d["views_anomaly"]:
+        return "good" if (d["views_v7"] or 0) > 0 else "bad"
+    if d["rev_anomaly"]:
+        return "good" if (d["rev_v7"] or 0) > 0 else "bad"
+    if d["sub_loss"]:
+        return "bad"
+    if d["sub_spike"]:
+        return "good"
+    if d["latest_video"] and d["latest_video"].get("breakout"):
+        return "good"
+    if d["traffic"]:
+        return "good"
+    return "good"
 
 
 # --- rendering ---------------------------------------------------------------------
@@ -404,7 +427,11 @@ def _body_blocks(digest: dict) -> list[list[str]]:
 
     # --- verdict + freshness ---------------------------------------------------
     head: list[str] = []
-    head.append("⚠️ " + d["headline"] if alert else "✅ Normal day — nothing needs you.")
+    if alert:
+        icon = "🟢" if d.get("alert_tone") == "good" else "⚠️"
+        head.append(f"{icon} " + d["headline"])
+    else:
+        head.append("✅ Normal day — nothing needs you.")
     freshness = ("estimated — YouTube revises the last ~2 days"
                  if d["latest_estimated"] else "finalized")
     head.append(f"(as of {_fmt_date(d['latest_date'])} · {freshness})")
@@ -487,16 +514,23 @@ def _body_blocks(digest: dict) -> list[list[str]]:
 
 
 def _subject(d: dict) -> str:
-    """The verdict, readable from the lock screen."""
+    """The verdict, readable from the lock screen. 🔴 stale · 🟢 good surge · ⚠️ concerning ·
+    ✅ normal."""
+    if d.get("stale"):
+        return f"Empty Besters 🔴 STALE ({d['days_behind']}d behind) — data not updating"
     day = _fmt_date(d["latest_date"])
     if d["status"] == "alert":
-        return f"Empty Besters ⚠️ {day}: {d['headline']}"
+        icon = "🟢" if d.get("alert_tone") == "good" else "⚠️"
+        return f"Empty Besters {icon} {day}: {d['headline']}"
     return f"Empty Besters ✅ {day}: {d['views']:,} views, {_fmt_money(d['revenue'])}"
 
 
 def render_text(digest: dict) -> tuple[str, str]:
     blocks = _body_blocks(digest)
     body = "\n\n".join("\n".join(block) for block in blocks)
+    if digest.get("stale"):
+        body = (stale_text_banner(digest["latest_date"], digest["days_behind"])
+                + "\n\n" + body)
     return _subject(digest), body
 
 
@@ -518,7 +552,7 @@ def render_html(digest: dict, *, img_cid: str | None) -> str:
             parts.append(escape("\n".join(block)))
     inner = "\n\n".join(parts)
 
-    return (
+    pre = (
         '<pre style="background:#14304A;color:#F4EFE3;'
         "font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;"
         'font-size:13px;line-height:1.5;padding:16px;border-radius:8px;'
@@ -526,3 +560,6 @@ def render_html(digest: dict, *, img_cid: str | None) -> str:
         + inner
         + "</pre>"
     )
+    if digest.get("stale"):
+        pre = stale_html_banner(digest["latest_date"], digest["days_behind"]) + pre
+    return pre

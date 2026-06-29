@@ -30,12 +30,16 @@ def _password(cfg: EmailConfig) -> str:
     return pw
 
 
-def build_message(cfg: EmailConfig, subject: str, body: str, pdf_path: str | Path) -> EmailMessage:
+def build_message(cfg: EmailConfig, subject: str, body: str, pdf_path: str | Path,
+                  *, html_body: str | None = None) -> EmailMessage:
     msg = EmailMessage()
     msg["From"] = cfg.sender
     msg["To"] = ", ".join(cfg.recipients)
     msg["Subject"] = subject
     msg.set_content(body)
+    if html_body:
+        # text + HTML alternative; the PDF attach below wraps both in multipart/mixed.
+        msg.add_alternative(html_body, subtype="html")
     p = Path(pdf_path)
     msg.add_attachment(p.read_bytes(), maintype="application", subtype="pdf", filename=p.name)
     return msg
@@ -59,10 +63,13 @@ def send_pdf(
     body: str,
     pdf_path: str | Path,
     *,
+    html_body: str | None = None,
     smtp_factory: Callable[..., smtplib.SMTP] = smtplib.SMTP,
 ) -> list[str]:
-    """Send ``pdf_path`` as an attachment to ``cfg.recipients``. Returns the recipients."""
-    msg = build_message(cfg, subject, body, pdf_path)
+    """Send ``pdf_path`` as an attachment to ``cfg.recipients``. When ``html_body`` is given
+    the email carries a text+HTML alternative (so the body can show e.g. a stale-data
+    banner) alongside the PDF attachment. Returns the recipients."""
+    msg = build_message(cfg, subject, body, pdf_path, html_body=html_body)
     return _send(cfg, msg, smtp_factory)
 
 

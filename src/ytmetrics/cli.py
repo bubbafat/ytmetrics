@@ -295,10 +295,22 @@ def cmd_briefing(args) -> int:
         )
         if override:
             cfg = replace(cfg, recipients=override)
+        from . import freshness
+
+        stale, latest, n = freshness.is_stale(config.db_path, config.freshness_warn_days)
         subject = f"Empty Besters — weekly briefing ({fmt_date(default_end_date())})"
         body = "Your weekly Empty Besters channel briefing is attached.\n\n— ytmetrics"
-        sent = mailer.send_pdf(cfg, subject, body, path)
-        get_logger().info("briefing emailed to %s", sent)
+        html_body = None
+        if stale:
+            subject = f"Empty Besters 🔴 STALE ({n}d behind) — weekly briefing"
+            body = freshness.stale_text_banner(latest, n) + "\n\n" + body
+            html_body = (
+                freshness.stale_html_banner(latest, n)
+                + "<p style=\"font-family:-apple-system,'Segoe UI',Roboto,sans-serif;"
+                "font-size:14px;\">Your weekly Empty Besters channel briefing is attached.</p>"
+            )
+        sent = mailer.send_pdf(cfg, subject, body, path, html_body=html_body)
+        get_logger().info("briefing emailed to %s (stale=%s)", sent, stale)
         print(f"emailed to {', '.join(sent)}")
     return 0
 
@@ -309,7 +321,7 @@ def cmd_daily(args) -> int:
     from . import daily as daily_mod
     from .daily import compute, render_text
 
-    digest = compute(config.db_path)
+    digest = compute(config.db_path, warn_days=config.freshness_warn_days)
     subject, body = render_text(digest)
 
     if args.email or args.to:

@@ -43,9 +43,11 @@ def test_compute_returns_expected_shape(tmp_path, fixtures_dir):
 
 
 def test_render_text_subject_and_body(tmp_path, fixtures_dir):
-    subject, body = daily.render_text(daily.compute(_populated_db(tmp_path, fixtures_dir)))
+    # today close to the fixture's latest day -> not stale, normal verdict path
+    subject, body = daily.render_text(
+        daily.compute(_populated_db(tmp_path, fixtures_dir), today=date(2026, 6, 5)))
     assert subject.startswith("Empty Besters")
-    assert ("✅" in subject) or ("⚠️" in subject)
+    assert any(i in subject for i in ("✅", "⚠️", "🟢"))   # 🟢 = good surge
     assert "LATEST DAY" in body
     assert "RECENT DAYS" in body
 
@@ -59,7 +61,7 @@ def test_chart_png_returns_png_bytes(tmp_path, fixtures_dir):
 
 
 def test_render_html_embeds_chart_and_escaped_text(tmp_path, fixtures_dir):
-    d = daily.compute(_populated_db(tmp_path, fixtures_dir))
+    d = daily.compute(_populated_db(tmp_path, fixtures_dir), today=date(2026, 6, 5))
     html = daily.render_html(d, img_cid="trend")
     assert "cid:trend" in html
     assert "RECENT DAYS" in html          # the escaped digest text is present
@@ -70,6 +72,26 @@ def test_estimated_flag_tracks_today(tmp_path, fixtures_dir):
     db = _populated_db(tmp_path, fixtures_dir)   # latest day = 2026-06-03
     assert daily.compute(db, today=date(2026, 6, 4))["latest_estimated"] is True
     assert daily.compute(db, today=date(2026, 6, 10))["latest_estimated"] is False
+
+
+def test_stale_banner_and_subject(tmp_path, fixtures_dir):
+    db = _populated_db(tmp_path, fixtures_dir)   # latest day = 2026-06-03
+    d = daily.compute(db, today=date(2026, 6, 20), warn_days=3)   # 17 days behind
+    assert d["stale"] is True
+    subject, body = daily.render_text(d)
+    assert "🔴" in subject and "STALE" in subject
+    assert "STALE DATA" in body
+    html = daily.render_html(d, img_cid=None)
+    assert "STALE DATA" in html and "background:#C5221F" in html
+
+
+def test_alert_tone_good_vs_bad():
+    base = {"views_anomaly": False, "views_v7": None, "rev_anomaly": False, "rev_v7": None,
+            "sub_loss": False, "sub_spike": False, "latest_video": None, "traffic": None}
+    assert daily._alert_tone({**base, "views_anomaly": True, "views_v7": 0.3}) == "good"
+    assert daily._alert_tone({**base, "views_anomaly": True, "views_v7": -0.3}) == "bad"
+    assert daily._alert_tone({**base, "sub_loss": True}) == "bad"
+    assert daily._alert_tone({**base, "sub_spike": True}) == "good"
 
 
 # --- pure helpers ------------------------------------------------------------------

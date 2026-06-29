@@ -96,6 +96,22 @@ def test_send_html_multipart_with_inline_image(tmp_path, monkeypatch):
     assert img.get_payload(decode=True) == png
 
 
+def test_send_pdf_with_html_body_is_multipart_with_banner(tmp_path, monkeypatch):
+    monkeypatch.setenv("YTM_TEST_SMTP_PW", "app-pass-123")
+    _FakeSMTP.instances.clear()
+    rcpts = mailer.send_pdf(
+        _cfg(tmp_path), "s", "plain body", _pdf(tmp_path),
+        html_body="<div>🔴 STALE DATA</div>", smtp_factory=_FakeSMTP,
+    )
+    assert rcpts == ["me@example.com", "you@example.com"]
+    msg = _FakeSMTP.instances[0].sent
+    types = {p.get_content_type() for p in msg.walk()
+             if p.get_content_maintype() != "multipart"}
+    assert "text/plain" in types
+    assert "text/html" in types
+    assert "application/pdf" in types
+
+
 def test_send_pdf_password_file_fallback(tmp_path, monkeypatch):
     monkeypatch.delenv("YTM_TEST_SMTP_PW", raising=False)
     pwfile = tmp_path / "pw"
