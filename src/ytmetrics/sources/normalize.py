@@ -102,6 +102,19 @@ def revenue_rows(resp: dict[str, Any], channel_id: str) -> list[dict]:
     return normalize_rows(resp, {"channel_id": channel_id})
 
 
+def video_revenue_rows(resp: dict[str, Any], channel_id: str) -> list[dict]:
+    # ``video`` is already mapped to video_id in API_TO_COL.
+    return normalize_rows(resp, {"channel_id": channel_id})
+
+
+def video_traffic_sources_rows(resp: dict[str, Any], channel_id: str) -> list[dict]:
+    return normalize_rows(resp, {"channel_id": channel_id})
+
+
+def video_discovery_rows(resp: dict[str, Any], channel_id: str) -> list[dict]:
+    return normalize_rows(resp, {"channel_id": channel_id})
+
+
 def video_daily_rows(resp: dict[str, Any], channel_id: str) -> tuple[list[dict], dict[str, str]]:
     """Return (video_daily rows, {video_id: content_type}).
 

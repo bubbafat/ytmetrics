@@ -181,7 +181,9 @@ class LiveSource(Source):
                 break
         return ids
 
-    def _video_metadata(self, channel: ChannelConfig, ids: list[str]) -> list[dict]:
+    def _video_metadata(
+        self, channel: ChannelConfig, ids: list[str], channel_id: str
+    ) -> list[dict]:
         _, data = self.services(channel)
         rows: list[dict] = []
         for i in range(0, len(ids), _META_CHUNK):
@@ -194,6 +196,7 @@ class LiveSource(Source):
             for it in resp.get("items", []):
                 rows.append({
                     "video_id": it["id"],
+                    "channel_id": channel_id,
                     "title": it.get("snippet", {}).get("title"),
                     "published_at": it.get("snippet", {}).get("publishedAt"),
                     "duration_seconds":
@@ -248,13 +251,13 @@ class LiveSource(Source):
         resp = self._query(analytics, ids=ids, start=start, end=end,
                            metrics=["views", "estimatedMinutesWatched"],
                            dimensions="day,insightTrafficSourceType", label="traffic_sources")
-        batch.tables["traffic_sources_daily"] = normalize.traffic_sources_rows(resp, cid)
+        batch.tables["channel_traffic_sources_daily"] = normalize.traffic_sources_rows(resp, cid)
 
         # 3. video_daily (uploads -> ids -> chunked by month and by <=500 ids)
         hb("listing videos")
         video_ids = self._list_video_ids(channel, info["uploads_playlist_id"]) \
             if info["uploads_playlist_id"] else []
-        batch.videos = self._video_metadata(channel, video_ids) if video_ids else []
+        batch.videos = self._video_metadata(channel, video_ids, cid) if video_ids else []
         vd_rows, content_types = self._fetch_video_daily(
             analytics, cid, ids, video_ids, start, end, heartbeat
         )
@@ -272,7 +275,7 @@ class LiveSource(Source):
         self._merge_discovery(analytics, ids, cid, start, end,
                               _THUMBNAIL_METRICS, "discovery.thumbnail", merged)
         if merged:
-            batch.tables["discovery_daily"] = list(merged.values())
+            batch.tables["channel_discovery_daily"] = list(merged.values())
         if not card_ok:  # the reliable half failed -> surface a degradation
             batch.degraded.append("discovery")
 
@@ -282,11 +285,18 @@ class LiveSource(Source):
             try:
                 resp = self._query(analytics, ids=ids, start=start, end=end,
                                    metrics=_REVENUE_METRICS, dimensions="day", label="revenue")
-                batch.tables["revenue_daily"] = normalize.revenue_rows(resp, cid)
+                batch.tables["channel_revenue_daily"] = normalize.revenue_rows(resp, cid)
             except HttpError as exc:
                 self.log.warning("revenue report unavailable (monetary scope / not in YPP?): %s",
                                  exc)
                 batch.degraded.append("revenue")
+
+        # 6. per-video facts (revenue/traffic/discovery): chunked by month and id like
+        #    video_daily; each guards/degrades so the core pull is never broken.
+        hb("video facts")
+        self._fetch_video_facts(
+            analytics, cid, ids, video_ids, start, end, include_revenue, batch, heartbeat
+        )
 
         return batch
 
@@ -338,6 +348,94 @@ class LiveSource(Source):
                 content_types.update(cts)
             progress(f"[backfill] {cs:%Y-%m} video_daily: {len(rows)} rows ({idx}/{total})")
         return rows, content_types
+
+    def _fetch_video_facts(
+        self, analytics, cid, ids, video_ids, start, end, include_revenue, batch, heartbeat
+    ) -> None:
+        """Per-video revenue / traffic-sources / discovery, mirroring _fetch_video_daily.
+
+        Each report is independently guarded: on HttpError we log and append to
+        ``batch.degraded``, never raising — per-video monetary and discovery reports are
+        frequently rejected by the API and must not break the core pull.
+        """
+        if not video_ids:
+            return
+        chunks = month_chunks(start, end)
+        revenue_rows: list[dict] = []
+        traffic_rows: list[dict] = []
+        discovery_rows: list[dict] = []
+        revenue_failed = traffic_failed = discovery_failed = False
+
+        for cs, ce in chunks:
+            if heartbeat:
+                heartbeat.update(f"video facts {cs:%Y-%m}")
+            for j in range(0, len(video_ids), _VIDEO_ID_CHUNK):
+                id_chunk = video_ids[j : j + _VIDEO_ID_CHUNK]
+                vfilter = "video==" + ",".join(id_chunk)
+
+                if include_revenue and not revenue_failed:
+                    try:
+                        resp = self._query(
+                            analytics, ids=ids, start=cs, end=ce, metrics=_REVENUE_METRICS,
+                            dimensions="video,day", filters=vfilter, label="video_revenue",
+                        )
+                        revenue_rows.extend(normalize.video_revenue_rows(resp, cid))
+                    except HttpError as exc:
+                        self.log.warning(
+                            "per-video revenue unavailable (monetary scope / not in YPP?): %s", exc
+                        )
+                        revenue_failed = True
+
+                if not traffic_failed:
+                    try:
+                        resp = self._query(
+                            analytics, ids=ids, start=cs, end=ce,
+                            metrics=["views", "estimatedMinutesWatched"],
+                            dimensions="video,day,insightTrafficSourceType", filters=vfilter,
+                            label="video_traffic_sources",
+                        )
+                        traffic_rows.extend(normalize.video_traffic_sources_rows(resp, cid))
+                    except HttpError as exc:
+                        self.log.warning("per-video traffic sources unavailable: %s", exc)
+                        traffic_failed = True
+
+                if not discovery_failed:
+                    try:
+                        resp = self._query(
+                            analytics, ids=ids, start=cs, end=ce,
+                            metrics=_CARD_METRICS + _THUMBNAIL_METRICS,
+                            dimensions="video,day", filters=vfilter, label="video_discovery",
+                        )
+                        discovery_rows.extend(normalize.video_discovery_rows(resp, cid))
+                    except HttpError as exc:
+                        # thumbnail metrics are often unavailable; retry with cards only.
+                        self.log.info(
+                            "per-video discovery (with thumbnails) unavailable (status %s), "
+                            "retrying card-only", _status(exc),
+                        )
+                        try:
+                            resp = self._query(
+                                analytics, ids=ids, start=cs, end=ce, metrics=_CARD_METRICS,
+                                dimensions="video,day", filters=vfilter,
+                                label="video_discovery.card",
+                            )
+                            discovery_rows.extend(normalize.video_discovery_rows(resp, cid))
+                        except HttpError as exc2:
+                            self.log.warning("per-video discovery unavailable: %s", exc2)
+                            discovery_failed = True
+
+        if revenue_rows:
+            batch.tables["video_revenue_daily"] = revenue_rows
+        if traffic_rows:
+            batch.tables["video_traffic_sources_daily"] = traffic_rows
+        if discovery_rows:
+            batch.tables["video_discovery_daily"] = discovery_rows
+        if include_revenue and revenue_failed:
+            batch.degraded.append("video_revenue")
+        if traffic_failed:
+            batch.degraded.append("video_traffic_sources")
+        if discovery_failed:
+            batch.degraded.append("video_discovery")
 
     # -- referrers (on-demand attribution) --------------------------------------
     def fetch_referrers(

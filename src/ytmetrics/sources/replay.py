@@ -4,7 +4,9 @@ Layout: ``<fixtures_root>/<channel_name>/`` containing
 ``meta.json`` ({channel_id, title, uploads_playlist_id}), ``videos.json`` (list of
 videos-dim rows), and raw analytics responses ``channel_daily.json``,
 ``traffic_sources.json``, ``video_daily.json``, and optionally ``discovery.json`` /
-``revenue.json``. A missing optional file simulates a degraded/unavailable report.
+``revenue.json`` (channel grain) plus ``video_revenue.json`` /
+``video_traffic_sources.json`` / ``video_discovery.json`` (video grain). A missing
+optional file simulates a degraded/unavailable report.
 """
 
 from __future__ import annotations
@@ -68,7 +70,7 @@ class ReplaySource(Source):
 
         ts = _load(cdir / "traffic_sources.json")
         if ts is not None:
-            batch.tables["traffic_sources_daily"] = _in_window(
+            batch.tables["channel_traffic_sources_daily"] = _in_window(
                 normalize.traffic_sources_rows(ts, channel_id), s, e
             )
 
@@ -80,7 +82,7 @@ class ReplaySource(Source):
 
         disc = _load(cdir / "discovery.json")
         if disc is not None:
-            batch.tables["discovery_daily"] = _in_window(
+            batch.tables["channel_discovery_daily"] = _in_window(
                 normalize.discovery_rows(disc, channel_id), s, e
             )
         else:
@@ -89,11 +91,37 @@ class ReplaySource(Source):
         if include_revenue:
             rev = _load(cdir / "revenue.json")
             if rev is not None:
-                batch.tables["revenue_daily"] = _in_window(
+                batch.tables["channel_revenue_daily"] = _in_window(
                     normalize.revenue_rows(rev, channel_id), s, e
                 )
             else:
                 batch.degraded.append("revenue")
+
+        # Per-video facts (optional fixtures; a missing file simulates a degraded report).
+        vts = _load(cdir / "video_traffic_sources.json")
+        if vts is not None:
+            batch.tables["video_traffic_sources_daily"] = _in_window(
+                normalize.video_traffic_sources_rows(vts, channel_id), s, e
+            )
+        else:
+            batch.degraded.append("video_traffic_sources")
+
+        vdisc = _load(cdir / "video_discovery.json")
+        if vdisc is not None:
+            batch.tables["video_discovery_daily"] = _in_window(
+                normalize.video_discovery_rows(vdisc, channel_id), s, e
+            )
+        else:
+            batch.degraded.append("video_discovery")
+
+        if include_revenue:
+            vrev = _load(cdir / "video_revenue.json")
+            if vrev is not None:
+                batch.tables["video_revenue_daily"] = _in_window(
+                    normalize.video_revenue_rows(vrev, channel_id), s, e
+                )
+            else:
+                batch.degraded.append("video_revenue")
 
         videos = _load(cdir / "videos.json") or []
         for v in videos:

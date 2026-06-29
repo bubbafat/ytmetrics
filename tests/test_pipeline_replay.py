@@ -24,7 +24,11 @@ def test_full_offline_pull(tmp_path, fixtures_dir):
         counts = store.table_counts()
         assert counts["channel_daily"] == 6
         assert counts["video_daily"] == 6
-        assert counts["revenue_daily"] == 3
+        assert counts["channel_revenue_daily"] == 3
+        # Per-video facts populated from the new fixtures.
+        assert counts["video_revenue_daily"] == 6
+        assert counts["video_traffic_sources_daily"] == 7
+        assert counts["video_discovery_daily"] == 6
         # Shorts vs long split is preserved.
         buckets = {
             r["bucket"]: r["views"]
@@ -55,8 +59,45 @@ def test_revenue_degrades_when_missing(tmp_path, fixtures_dir):
         c = summary.channels[0]
         assert c.ok
         assert "revenue" in c.degraded
-        assert store.table_counts()["revenue_daily"] == 0
+        assert store.table_counts()["channel_revenue_daily"] == 0
         assert store.table_counts()["channel_daily"] == 6  # core unaffected
+
+
+def test_revenue_attribution_residual(tmp_path, fixtures_dir):
+    ch = make_channel(tmp_path)
+    with SqliteStore(tmp_path / "t.db") as store:
+        run_pull(store, ReplaySource(fixtures_dir), [ch], *WINDOW)
+        rows = {
+            r["date"]: r
+            for r in store.query(
+                "SELECT date, channel_revenue, attributed_revenue, unattributed_revenue "
+                "FROM v_revenue_attribution ORDER BY date"
+            )
+        }
+        # Channel total legitimately exceeds the sum of per-video revenue; the residual
+        # is surfaced as unattributed_revenue (2.15 channel vs 1.00+0.50 attributed).
+        r1 = rows["2026-06-01"]
+        assert round(r1["channel_revenue"], 2) == 2.15
+        assert round(r1["attributed_revenue"], 2) == 1.50
+        assert round(r1["unattributed_revenue"], 2) == 0.65
+
+
+def test_video_revenue_lifetime(tmp_path, fixtures_dir):
+    ch = make_channel(tmp_path)
+    with SqliteStore(tmp_path / "t.db") as store:
+        run_pull(store, ReplaySource(fixtures_dir), [ch], *WINDOW)
+        rows = {
+            r["video_id"]: r
+            for r in store.query(
+                "SELECT video_id, title, content_type, estimated_revenue "
+                "FROM v_video_revenue_lifetime"
+            )
+        }
+        vod = rows["vodAAAAAAAA"]
+        assert vod["content_type"] == "VIDEO_ON_DEMAND"
+        assert vod["title"] == "Long-form: Getting Started"
+        # 1.00 + 0.80 + 1.50 over the window.
+        assert round(vod["estimated_revenue"], 2) == 3.30
 
 
 def test_revision_logged_across_pulls(tmp_path, fixtures_dir):

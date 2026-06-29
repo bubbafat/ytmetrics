@@ -1,0 +1,18 @@
+{
+  "columnHeaders": [
+    {"name": "video"},
+    {"name": "day"},
+    {"name": "insightTrafficSourceType"},
+    {"name": "views"},
+    {"name": "estimatedMinutesWatched"}
+  ],
+  "rows": [
+    ["vodAAAAAAAA", "2026-06-01", "YT_SEARCH", 70, 350],
+    ["vodAAAAAAAA", "2026-06-01", "RELATED_VIDEO", 30, 150],
+    ["vodAAAAAAAA", "2026-06-02", "YT_SEARCH", 60, 300],
+    ["vodAAAAAAAA", "2026-06-03", "YT_SEARCH", 90, 450],
+    ["shrtBBBBBBB", "2026-06-01", "SHORTS", 700, 70],
+    ["shrtBBBBBBB", "2026-06-02", "SHORTS", 560, 60],
+    ["shrtBBBBBBB", "2026-06-03", "SHORTS", 900, 100]
+  ]
+}

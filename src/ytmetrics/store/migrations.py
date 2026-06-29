@@ -19,6 +19,8 @@ def _create_all(conn: sqlite3.Connection) -> None:
     conn.execute(schema.REVISION_LOG_DDL)
     for spec in schema.UPSERT_TABLES:
         conn.execute(spec.create_sql())
+    for index_sql in schema.INDEXES:
+        conn.execute(index_sql)
     _create_views(conn)
 
 
@@ -28,8 +30,17 @@ def _create_views(conn: sqlite3.Connection) -> None:
         conn.execute(ddl)
 
 
+def _v2_drop_renamed_channel_tables(conn: sqlite3.Connection) -> None:
+    """v2 renamed the three channel-grain facts with a ``channel_`` prefix. The old data
+    is disposable (the owner re-pulls), so drop the old-named tables outright."""
+    for old in ("revenue_daily", "discovery_daily", "traffic_sources_daily"):
+        conn.execute(f"DROP TABLE IF EXISTS {old};")
+
+
 # Upgrade steps keyed by the version they produce. Empty for v1 (handled by _create_all).
-_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {}
+_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    2: _v2_drop_renamed_channel_tables,
+}
 
 
 def get_version(conn: sqlite3.Connection) -> int:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -97,8 +97,8 @@ CHANNEL_DAILY = TableSpec(
     revisioned=True,
 )
 
-DISCOVERY_DAILY = TableSpec(
-    name="discovery_daily",
+CHANNEL_DISCOVERY_DAILY = TableSpec(
+    name="channel_discovery_daily",
     columns=[
         ("channel_id", "TEXT"),
         ("date", "TEXT"),
@@ -137,8 +137,8 @@ VIDEO_DAILY = TableSpec(
     revisioned=True,
 )
 
-TRAFFIC_SOURCES_DAILY = TableSpec(
-    name="traffic_sources_daily",
+CHANNEL_TRAFFIC_SOURCES_DAILY = TableSpec(
+    name="channel_traffic_sources_daily",
     columns=[
         ("channel_id", "TEXT"),
         ("date", "TEXT"),
@@ -177,8 +177,8 @@ VIDEO_REFERRERS = TableSpec(
     ts_col="pulled_at",
 )
 
-REVENUE_DAILY = TableSpec(
-    name="revenue_daily",
+CHANNEL_REVENUE_DAILY = TableSpec(
+    name="channel_revenue_daily",
     columns=[
         ("channel_id", "TEXT"),
         ("date", "TEXT"),
@@ -197,16 +197,108 @@ REVENUE_DAILY = TableSpec(
     revisioned=True,
 )
 
+# --- Video-grain fact tables ------------------------------------------------------
+# Mirror the channel-grain facts but keyed per video. content_type is NOT denormalized
+# here — join to ``videos`` for it. These tables grow large, so they get indexes below.
+
+VIDEO_REVENUE_DAILY = TableSpec(
+    name="video_revenue_daily",
+    columns=[
+        ("channel_id", "TEXT"),
+        ("video_id", "TEXT"),
+        ("date", "TEXT"),
+        ("estimated_revenue", "REAL"),
+        ("estimated_ad_revenue", "REAL"),
+        ("estimated_red_partner_revenue", "REAL"),
+        ("gross_revenue", "REAL"),
+        ("cpm", "REAL"),
+        ("playback_based_cpm", "REAL"),
+        ("monetized_playbacks", "INTEGER"),
+        ("ad_impressions", "INTEGER"),
+        ("last_updated", "TEXT"),
+    ],
+    pk=["channel_id", "video_id", "date"],
+    ts_col="last_updated",
+    revisioned=True,
+)
+
+VIDEO_TRAFFIC_SOURCES_DAILY = TableSpec(
+    name="video_traffic_sources_daily",
+    columns=[
+        ("channel_id", "TEXT"),
+        ("video_id", "TEXT"),
+        ("date", "TEXT"),
+        ("traffic_source_type", "TEXT"),
+        ("views", "INTEGER"),
+        ("estimated_minutes_watched", "INTEGER"),
+        ("last_updated", "TEXT"),
+    ],
+    pk=["channel_id", "video_id", "date", "traffic_source_type"],
+    ts_col="last_updated",
+    revisioned=True,
+)
+
+VIDEO_DISCOVERY_DAILY = TableSpec(
+    name="video_discovery_daily",
+    columns=[
+        ("channel_id", "TEXT"),
+        ("video_id", "TEXT"),
+        ("date", "TEXT"),
+        ("video_thumbnail_impressions", "INTEGER"),
+        ("video_thumbnail_impressions_click_rate", "REAL"),
+        ("card_impressions", "INTEGER"),
+        ("card_click_rate", "REAL"),
+        ("last_updated", "TEXT"),
+    ],
+    pk=["channel_id", "video_id", "date"],
+    ts_col="last_updated",
+    revisioned=True,
+)
+
+# --- User-maintained dimension ----------------------------------------------------
+# Hand-tagged topics per video. Never written by the pull — only by the owner.
+
+VIDEO_TOPICS = TableSpec(
+    name="video_topics",
+    columns=[
+        ("video_id", "TEXT"),
+        ("topic", "TEXT"),
+        ("added_at", "TEXT"),
+    ],
+    pk=["video_id", "topic"],
+    ts_col="added_at",
+)
+
 # Order matters for creation (dims first is not required with IF NOT EXISTS, but tidy).
 UPSERT_TABLES: list[TableSpec] = [
     CHANNELS,
     VIDEOS,
     CHANNEL_DAILY,
-    DISCOVERY_DAILY,
+    CHANNEL_DISCOVERY_DAILY,
     VIDEO_DAILY,
-    TRAFFIC_SOURCES_DAILY,
+    CHANNEL_TRAFFIC_SOURCES_DAILY,
     VIDEO_REFERRERS,
-    REVENUE_DAILY,
+    CHANNEL_REVENUE_DAILY,
+    VIDEO_REVENUE_DAILY,
+    VIDEO_TRAFFIC_SOURCES_DAILY,
+    VIDEO_DISCOVERY_DAILY,
+    VIDEO_TOPICS,
+]
+
+# Secondary indexes for the video-grain tables (they get large; the channel-grain
+# tables are small enough not to need them). Created by migrations._create_all.
+INDEXES: list[str] = [
+    "CREATE INDEX IF NOT EXISTS ix_video_daily_date ON video_daily(date);",
+    "CREATE INDEX IF NOT EXISTS ix_video_daily_video ON video_daily(video_id);",
+    "CREATE INDEX IF NOT EXISTS ix_video_revenue_daily_date ON video_revenue_daily(date);",
+    "CREATE INDEX IF NOT EXISTS ix_video_revenue_daily_video ON video_revenue_daily(video_id);",
+    "CREATE INDEX IF NOT EXISTS ix_video_traffic_sources_daily_date "
+    "ON video_traffic_sources_daily(date);",
+    "CREATE INDEX IF NOT EXISTS ix_video_traffic_sources_daily_video "
+    "ON video_traffic_sources_daily(video_id);",
+    "CREATE INDEX IF NOT EXISTS ix_video_discovery_daily_date ON video_discovery_daily(date);",
+    "CREATE INDEX IF NOT EXISTS ix_video_discovery_daily_video "
+    "ON video_discovery_daily(video_id);",
 ]
 
 TABLES_BY_NAME: dict[str, TableSpec] = {t.name: t for t in UPSERT_TABLES}
@@ -296,7 +388,7 @@ VIEWS: dict[str, str] = {
           t.views - COALESCE(r.monetized_playbacks, 0) - COALESCE(t.red_views, 0)
                                                          AS approx_non_monetized_views
         FROM v_channel_daily_totals t
-        LEFT JOIN revenue_daily r
+        LEFT JOIN channel_revenue_daily r
           ON r.channel_id = t.channel_id AND r.date = t.date;
     """,
     "v_paid_vs_organic": """
@@ -308,7 +400,42 @@ VIEWS: dict[str, str] = {
                THEN 'paid' ELSE 'organic' END AS bucket,
           SUM(views)                     AS views,
           SUM(estimated_minutes_watched) AS estimated_minutes_watched
-        FROM traffic_sources_daily
+        FROM channel_traffic_sources_daily
         GROUP BY channel_id, date, bucket;
+    """,
+    "v_video_revenue_lifetime": """
+        CREATE VIEW v_video_revenue_lifetime AS
+        SELECT
+          vr.channel_id,
+          vr.video_id,
+          v.title,
+          v.content_type,
+          MIN(vr.date) AS first_date,
+          MAX(vr.date) AS last_date,
+          SUM(vr.estimated_revenue)             AS estimated_revenue,
+          SUM(vr.estimated_ad_revenue)          AS estimated_ad_revenue,
+          SUM(vr.estimated_red_partner_revenue) AS estimated_red_partner_revenue,
+          SUM(vr.gross_revenue)                 AS gross_revenue,
+          SUM(vr.monetized_playbacks)           AS monetized_playbacks,
+          SUM(vr.ad_impressions)                AS ad_impressions
+        FROM video_revenue_daily vr
+        LEFT JOIN videos v ON v.video_id = vr.video_id
+        GROUP BY vr.channel_id, vr.video_id;
+    """,
+    "v_revenue_attribution": """
+        CREATE VIEW v_revenue_attribution AS
+        SELECT
+          c.channel_id,
+          c.date,
+          c.estimated_revenue                          AS channel_revenue,
+          COALESCE(v.attributed_revenue, 0)            AS attributed_revenue,
+          c.estimated_revenue - COALESCE(v.attributed_revenue, 0)
+                                                       AS unattributed_revenue
+        FROM channel_revenue_daily c
+        LEFT JOIN (
+          SELECT channel_id, date, SUM(estimated_revenue) AS attributed_revenue
+          FROM video_revenue_daily
+          GROUP BY channel_id, date
+        ) v ON v.channel_id = c.channel_id AND v.date = c.date;
     """,
 }
