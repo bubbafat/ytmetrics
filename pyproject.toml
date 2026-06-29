@@ -17,6 +17,8 @@ dependencies = [
 [project.optional-dependencies]
 # macOS Keychain secret backend (opt-in)
 keychain = ["keyring>=24"]
+# Weekly PDF briefing generator (opt-in)
+briefing = ["matplotlib>=3.7"]
 
 [project.scripts]
 ytmetrics = "ytmetrics.cli:main"

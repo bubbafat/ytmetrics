@@ -36,6 +36,17 @@ class ChannelConfig:
 
 
 @dataclass(frozen=True)
+class EmailConfig:
+    smtp_host: str
+    smtp_port: int
+    username: str
+    sender: str
+    recipients: list[str]
+    password_env: str       # env var holding the SMTP password / Gmail app password
+    password_file: Path | None  # fallback file (gitignored) if the env var is unset
+
+
+@dataclass(frozen=True)
 class Config:
     base_dir: Path
     db_path: Path
@@ -49,6 +60,7 @@ class Config:
     freshness_warn_days: int
     insights_retention_weeks: int
     on_failure: dict[str, str] | None
+    email: EmailConfig | None = None
     channels: list[ChannelConfig] = field(default_factory=list)
 
     def channel(self, name: str) -> ChannelConfig:
@@ -115,6 +127,24 @@ def load_config(path: str | Path) -> Config:
         if len(keys) != 1:
             raise ConfigError("[on_failure] must set exactly one of 'command' or 'webhook'")
 
+    email_cfg: EmailConfig | None = None
+    em = raw.get("email")
+    if em:
+        if "username" not in em:
+            raise ConfigError("[email] requires 'username'")
+        to = em.get("to", em["username"])
+        recipients = [to] if isinstance(to, str) else [str(x) for x in to]
+        email_cfg = EmailConfig(
+            smtp_host=str(em.get("smtp_host", "smtp.gmail.com")),
+            smtp_port=int(em.get("smtp_port", 587)),
+            username=str(em["username"]),
+            sender=str(em.get("from", em["username"])),
+            recipients=recipients,
+            password_env=str(em.get("password_env", "YTMETRICS_SMTP_PASSWORD")),
+            password_file=(_resolve(base, em["password_file"]) if em.get("password_file")
+                           else base / "secrets" / "smtp_password"),
+        )
+
     return Config(
         base_dir=base,
         db_path=_resolve(base, raw.get("db_path", "ytmetrics.db")),
@@ -128,5 +158,6 @@ def load_config(path: str | Path) -> Config:
         freshness_warn_days=int(raw.get("freshness_warn_days", 3)),
         insights_retention_weeks=int(raw.get("insights_retention_weeks", 26)),
         on_failure=on_failure,
+        email=email_cfg,
         channels=channels,
     )

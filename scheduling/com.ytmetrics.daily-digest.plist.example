@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Daily EMAILED digest — every day at 06:35 local. Runs scripts/daily_briefing.sh:
+  pull → daily --email. It both PULLS and DIGESTS, so it can run alongside the bare
+  daily pull job (com.ytmetrics.daily) or REPLACE it (it pulls 7 days too); pick one to
+  avoid two overlapping pulls. It runs 5 min after the bare daily pull (06:30) so that, if
+  you keep both, the digest reads fresh data.
+
+  The digest reports on the LATEST FINALIZED day (max(date) in channel_daily) — YouTube
+  still revises the most recent 2-3 days, so the email says which day it's reporting rather
+  than pretending it's literally yesterday.
+
+  One-time setup:
+    1. Edit the uv path / WorkingDirectory below if they differ.
+    2. Create a Gmail App Password (Google Account → Security → 2-Step Verification →
+       App passwords) and store it WITHOUT committing it:
+         echo 'your-app-password' > /Users/robert/src/ytmetrics/secrets/smtp_password
+       (secrets/ is gitignored). Or export YTMETRICS_SMTP_PASSWORD in the job's env.
+    3. Add an [email] section to config.toml (see config.example.toml).
+    4. cp this file to ~/Library/LaunchAgents/com.ytmetrics.daily-digest.plist (drop ".example")
+    5. launchctl load ~/Library/LaunchAgents/com.ytmetrics.daily-digest.plist
+    6. launchctl start com.ytmetrics.daily-digest   # run once now to verify the email arrives
+
+  Note: the Mac must be awake at 06:35; if asleep, launchd runs the job on the next wake.
+  Needs a live OAuth token for the pull step.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ytmetrics.daily-digest</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/robert/src/ytmetrics/scripts/daily_briefing.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/robert/src/ytmetrics</string>
+
+  <!-- Every day at 06:35 local time. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>6</integer>
+    <key>Minute</key><integer>35</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/robert/src/ytmetrics/logs/launchd.daily-digest.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/robert/src/ytmetrics/logs/launchd.daily-digest.err</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

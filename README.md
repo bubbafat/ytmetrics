@@ -100,6 +100,69 @@ Each insights run appends a fresh snapshot, so the windowed tables grow by one s
 run. `insights` prunes snapshots older than `insights_retention_weeks` (default 26; `0`
 keeps all) after each run, leaving the daily history untouched.
 
+## Weekly briefing PDF (opt-in)
+
+`ytmetrics briefing` renders a brand-styled, 8-page channel-intelligence PDF straight from
+the db — scoreboard, latest-video performance, what's working, audience, monetization, a
+search/topic radar, and a data-derived top-3 action plan. Internal-momentum only (no web
+calls). Needs the `briefing` extra:
+```bash
+uv sync --extra briefing
+uv run ytmetrics briefing                       # -> reports/empty-besters-briefing-<date>.pdf
+uv run ytmetrics briefing --out ~/Desktop/eb.pdf --weeks 1
+```
+### Email it automatically (Mondays 6am)
+
+`scripts/weekly_briefing.sh` (pull → insights → `briefing --email`) plus
+`scheduling/com.ytmetrics.briefing.plist.example` deliver the PDF to your inbox every Monday
+at 06:00 local. One-time setup:
+1. Add an `[email]` section to `config.toml` (see `config.example.toml`).
+2. Create a Gmail **App Password** (Google Account → Security → 2-Step Verification → App
+   passwords) and store it without committing it:
+   `echo 'app-password' > secrets/smtp_password` (`secrets/` is gitignored), or export
+   `YTMETRICS_SMTP_PASSWORD`.
+3. `cp scheduling/com.ytmetrics.briefing.plist.example ~/Library/LaunchAgents/com.ytmetrics.briefing.plist`,
+   edit paths, `launchctl load` it, then `launchctl start com.ytmetrics.briefing` to test.
+
+Send on demand any time with `ytmetrics briefing --email` (or `--to someone@example.com`).
+The Mac must be awake at 06:00 Monday; if asleep, launchd runs it on the next wake.
+
+## Daily digest email
+
+`ytmetrics daily` renders a calm, **mobile-first plain-text** digest you can read on your
+phone instead of compulsively opening YouTube Studio. The **verdict lives in the subject
+line** (`✅` normal vs `⚠️` + a one-line headline) so you can triage from the lock screen
+without opening the mail. When emailed, the message embeds an **inline 7-day trend chart**
+(views in coral, revenue in sky) whenever matplotlib (the `briefing` extra) is installed,
+and falls back to the text sparkline otherwise — the stdout path stays plain text.
+
+It shows the **freshest day available** (`max(date)` in `channel_daily`) — Studio-style, so
+you see tentative recent numbers rather than waiting ~2 days for them to finalize. YouTube
+revises roughly the last 2-3 days, so any day that recent is marked **`(est.)`** and a
+`RECENT DAYS` table lists the last few days with the same marker — what'll change vs what's
+settled. (To get those tentative days into the db, the daily job pulls through *yesterday*;
+the merge-upsert + revision log correct them automatically later.) Most days read "✅ Normal
+day — nothing needs you"; it only escalates when an anomaly clears a fixed threshold
+(views/revenue ±20% vs the 7-day average, a net-subscriber loss or spike, a traffic-source
+surge, or the latest video breaking out). Sections: the latest day's stats with both
+day-over-day and vs-7-day deltas, the recent-days table, what moved it (top videos), the
+latest video in one line, signals, and 7-day sparklines.
+
+```bash
+uv run ytmetrics daily                          # print subject + body to stdout
+uv run ytmetrics daily --email                  # email it (uses [email] 'to')
+uv run ytmetrics daily --to someone@example.com # override the recipient
+```
+
+### Email it automatically (daily 6:35am)
+
+`scripts/daily_briefing.sh` (`pull` through yesterday → `daily --email`) plus
+`scheduling/com.ytmetrics.daily-digest.plist.example` deliver the digest every day at 06:35
+local. It both pulls and digests, so it can run alongside the bare daily pull job
+(`com.ytmetrics.daily`, 06:30) or replace it. Same one-time `[email]` / Gmail App Password
+setup as the weekly briefing above, then `cp` the plist into `~/Library/LaunchAgents/`,
+`launchctl load` it, and `launchctl start com.ytmetrics.daily-digest` to test.
+
 ## Deploy elsewhere (later)
 
 Because everything is config + token files and the entrypoint is non-interactive, the same

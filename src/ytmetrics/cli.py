@@ -1,6 +1,7 @@
 """ytmetrics command-line interface.
 
-Commands: pull, insights, list-channels, doctor, info, referrers, backups, restore.
+Commands: pull, insights, briefing, daily, list-channels, doctor, info, referrers, backups,
+restore.
 Only `list-channels` is interactive (it can open a browser to mint the first token);
 everything else runs headless from the stored refresh token.
 """
@@ -265,6 +266,82 @@ def cmd_insights(args) -> int:
     return 1 if summary.any_failed else 0
 
 
+def cmd_briefing(args) -> int:
+    config = _load(args)
+    setup_logging(config.log_dir, config.log_level, args.verbose)
+    out = args.out or f"reports/empty-besters-briefing-{fmt_date(default_end_date())}.pdf"
+    from .briefing import generate
+
+    try:
+        path = generate(config.db_path, out, weeks=args.weeks)
+    except ImportError as exc:
+        raise SystemExit(
+            "briefing needs matplotlib — `uv sync --extra briefing` (or pip install matplotlib)"
+        ) from exc
+    print(f"briefing written: {path}")
+
+    if args.email or args.to:
+        from dataclasses import replace
+
+        from . import mailer
+
+        cfg = config.email
+        if cfg is None:
+            raise SystemExit("add an [email] section to config.toml to send (see config.example.toml)")
+        override = (
+            [args.email] if isinstance(args.email, str)
+            else [r.strip() for r in args.to.split(",")] if args.to
+            else None
+        )
+        if override:
+            cfg = replace(cfg, recipients=override)
+        subject = f"Empty Besters — weekly briefing ({fmt_date(default_end_date())})"
+        body = "Your weekly Empty Besters channel briefing is attached.\n\n— ytmetrics"
+        sent = mailer.send_pdf(cfg, subject, body, path)
+        get_logger().info("briefing emailed to %s", sent)
+        print(f"emailed to {', '.join(sent)}")
+    return 0
+
+
+def cmd_daily(args) -> int:
+    config = _load(args)
+    setup_logging(config.log_dir, config.log_level, args.verbose)
+    from . import daily as daily_mod
+    from .daily import compute, render_text
+
+    digest = compute(config.db_path)
+    subject, body = render_text(digest)
+
+    if args.email or args.to:
+        from dataclasses import replace
+
+        from . import mailer
+
+        cfg = config.email
+        if cfg is None:
+            raise SystemExit("add an [email] section to config.toml to send (see config.example.toml)")
+        override = (
+            [args.email] if isinstance(args.email, str)
+            else [r.strip() for r in args.to.split(",")] if args.to
+            else None
+        )
+        if override:
+            cfg = replace(cfg, recipients=override)
+        png = daily_mod.chart_png(digest)
+        if png is not None:
+            html = daily_mod.render_html(digest, img_cid="trend")
+            sent = mailer.send_html(cfg, subject, body, html, images={"trend": png})
+        else:
+            sent = mailer.send_text(cfg, subject, body)
+        get_logger().info("daily digest emailed to %s", sent)
+        print(f"emailed to {', '.join(sent)}")
+    else:
+        print(subject)
+        print()
+        print(body)
+    return 0
+
+
 def cmd_backups(args) -> int:
     config = _load(args)
     from .store import backup
@@ -390,6 +467,21 @@ def build_parser() -> argparse.ArgumentParser:
                      help="skip the demographics report")
     ins.add_argument("--interactive", action="store_true")
     ins.set_defaults(func=cmd_insights)
+
+    br = add_sub("briefing", help="generate the weekly channel-intelligence PDF")
+    br.add_argument("--out", help="output PDF path (default reports/empty-besters-briefing-DATE.pdf)")
+    br.add_argument("--weeks", type=int, default=1,
+                    help="window size in weeks for the week-over-week deltas (default 1)")
+    br.add_argument("--email", nargs="?", const=True, default=False,
+                    help="email the PDF; optionally pass an address (else uses [email] 'to')")
+    br.add_argument("--to", help="override recipient(s), comma-separated (implies --email)")
+    br.set_defaults(func=cmd_briefing)
+
+    dly = add_sub("daily", help="render (or email) the mobile-first plain-text daily digest")
+    dly.add_argument("--email", nargs="?", const=True, default=False,
+                     help="email the digest; optionally pass an address (else uses [email] 'to')")
+    dly.add_argument("--to", help="override recipient(s), comma-separated (implies --email)")
+    dly.set_defaults(func=cmd_daily)
 
     bk = add_sub("backups", help="list db snapshots")
     bk.set_defaults(func=cmd_backups)

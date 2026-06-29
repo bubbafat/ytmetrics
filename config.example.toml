@@ -16,6 +16,18 @@ heartbeat_seconds     = 3           # cadence of the "still working" status line
 freshness_warn_days   = 3           # warn if data_through falls this far behind today
 insights_retention_weeks = 26       # keep ~6mo of windowed insight snapshots; 0 = keep all
 
+# --- Email the weekly briefing PDF (opt-in; used by `ytmetrics briefing --email`) ---
+# The password is NOT stored here: it comes from $YTMETRICS_SMTP_PASSWORD, or the
+# gitignored file secrets/smtp_password. For Gmail, use an App Password (needs 2FA).
+[email]
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+username  = "robert.horvick@gmail.com"
+from      = "robert.horvick@gmail.com"
+to        = "robert.horvick@gmail.com"   # string or array of recipients
+# password_env  = "YTMETRICS_SMTP_PASSWORD"   # default
+# password_file = "secrets/smtp_password"     # default fallback
+
 # --- Optional failure hook (default off) ---
 # Exactly one of command / webhook may be set.
 # [on_failure]
