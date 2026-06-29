@@ -1,0 +1,14 @@
+{
+  "columnHeaders": [
+    {"name": "deviceType"},
+    {"name": "operatingSystem"},
+    {"name": "views"},
+    {"name": "estimatedMinutesWatched"}
+  ],
+  "rows": [
+    ["MOBILE", "ANDROID", 1400, 6800],
+    ["MOBILE", "IOS", 900, 5200],
+    ["DESKTOP", "WINDOWS", 520, 3100],
+    ["TV", "OTHER", 280, 2400]
+  ]
+}

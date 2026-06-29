@@ -51,6 +51,9 @@ _REVENUE_METRICS = [
     "grossRevenue", "cpm", "playbackBasedCpm", "monetizedPlaybacks", "adImpressions",
 ]
 _REFERRER_SOURCE_TYPES = ["RELATED_VIDEO", "END_SCREEN", "VIDEO_REMIXES"]
+# Traffic-source types that carry a meaningful insightTrafficSourceDetail (W6). YT_SEARCH
+# yields the search terms; PLAYLIST yields the referring playlists.
+_DETAIL_SOURCE_TYPES = ["YT_SEARCH", "PLAYLIST"]
 
 _DURATION_RE = re.compile(
     r"P(?:(?P<days>\d+)D)?T?(?:(?P<h>\d+)H)?(?:(?P<m>\d+)M)?(?:(?P<s>\d+)S)?"
@@ -145,20 +148,23 @@ class LiveSource(Source):
     def resolve_channel(self, channel: ChannelConfig) -> dict:
         _, data = self.services(channel)
         self.counter.tick("channels.list")
+        part = "snippet,contentDetails,statistics"
         if channel.channel_id.lower() == "mine":
-            req = data.channels().list(part="snippet,contentDetails", mine=True)
+            req = data.channels().list(part=part, mine=True)
         else:
-            req = data.channels().list(part="snippet,contentDetails", id=channel.channel_id)
+            req = data.channels().list(part=part, id=channel.channel_id)
         resp = with_retries(lambda: req.execute(), label="channels.list", logger=self.log)
         items = resp.get("items", [])
         if not items:
             raise RuntimeError(f"channel not found for {channel.name!r} ({channel.channel_id})")
         item = items[0]
+        sub_count = item.get("statistics", {}).get("subscriberCount")
         return {
             "channel_id": item["id"],
             "title": item.get("snippet", {}).get("title"),
             "uploads_playlist_id":
                 item.get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads"),
+            "subscriber_count": int(sub_count) if sub_count is not None else None,
         }
 
     def _list_video_ids(self, channel: ChannelConfig, uploads_playlist_id: str) -> list[str]:
@@ -223,6 +229,7 @@ class LiveSource(Source):
             channel_id=cid,
             channel_title=info["title"],
             uploads_playlist_id=info["uploads_playlist_id"],
+            subscriber_count=info.get("subscriber_count"),
         )
 
         def hb(msg: str) -> None:
@@ -252,6 +259,17 @@ class LiveSource(Source):
                            metrics=["views", "estimatedMinutesWatched"],
                            dimensions="day,insightTrafficSourceType", label="traffic_sources")
         batch.tables["channel_traffic_sources_daily"] = normalize.traffic_sources_rows(resp, cid)
+
+        # 2b. subscribed-status daily (W5: subscribedStatus composes with day; guarded).
+        hb("subscribed_status")
+        try:
+            resp = self._query(analytics, ids=ids, start=start, end=end,
+                               metrics=["views", "estimatedMinutesWatched"],
+                               dimensions="day,subscribedStatus", label="subscribed_status")
+            batch.tables["subscribed_status_daily"] = normalize.subscribed_status_rows(resp, cid)
+        except HttpError as exc:
+            self.log.warning("subscribed_status report unavailable: %s", exc)
+            batch.degraded.append("subscribed_status")
 
         # 3. video_daily (uploads -> ids -> chunked by month and by <=500 ids)
         hb("listing videos")
@@ -464,3 +482,140 @@ class LiveSource(Source):
                 )
             )
         return out
+
+    # -- windowed insights (on a slower cadence than the daily pull) -------------
+    def fetch_insights(
+        self,
+        channel: ChannelConfig,
+        start: date,
+        end: date,
+        *,
+        include_demographics: bool = True,
+        heartbeat: Heartbeat | None = None,
+    ) -> PullBatch:
+        """Aggregate-over-a-window insight reports (W1–W4, W6). Each report is
+        independently guarded: on HttpError we log + append to ``batch.degraded`` and
+        carry on, so one unavailable report never breaks the others."""
+        analytics, _ = self.services(channel)
+        info = self.resolve_channel(channel)
+        cid = info["channel_id"]
+        ids = f"channel=={cid}"
+        ws, we = fmt_date(start), fmt_date(end)
+        batch = PullBatch(
+            channel_id=cid,
+            channel_title=info["title"],
+            uploads_playlist_id=info["uploads_playlist_id"],
+            subscriber_count=info.get("subscriber_count"),
+        )
+
+        def hb(msg: str) -> None:
+            if heartbeat:
+                heartbeat.update(f"channel={channel.name} insights {msg}")
+
+        # W2 demographics (channel grain: who watches the channel).
+        if include_demographics:
+            hb("demographics")
+            try:
+                resp = self._query(analytics, ids=ids, start=start, end=end,
+                                   metrics=["viewerPercentage"], dimensions="ageGroup,gender",
+                                   label="demographics")
+                batch.tables["channel_demographics"] = normalize.demographics_rows(
+                    resp, cid, ws, we
+                )
+            except HttpError as exc:
+                self.log.warning("demographics report unavailable: %s", exc)
+                batch.degraded.append("demographics")
+
+        # W3 geography.
+        hb("geography")
+        try:
+            resp = self._query(
+                analytics, ids=ids, start=start, end=end,
+                metrics=["views", "estimatedMinutesWatched", "averageViewPercentage"],
+                dimensions="country", label="geography",
+            )
+            batch.tables["audience_geography"] = normalize.geography_rows(resp, cid, ws, we)
+        except HttpError as exc:
+            self.log.warning("geography report unavailable: %s", exc)
+            batch.degraded.append("geography")
+
+        # W4 devices / OS.
+        hb("devices")
+        try:
+            resp = self._query(analytics, ids=ids, start=start, end=end,
+                               metrics=["views", "estimatedMinutesWatched"],
+                               dimensions="deviceType,operatingSystem", label="devices")
+            batch.tables["audience_devices"] = normalize.devices_rows(resp, cid, ws, we)
+        except HttpError as exc:
+            self.log.warning("devices report unavailable: %s", exc)
+            batch.degraded.append("devices")
+
+        # W6 search terms / traffic-source detail (channel-level, video_id='').
+        hb("traffic_source_detail")
+        detail_rows: list[dict] = []
+        detail_failed = False
+        for source_type in _DETAIL_SOURCE_TYPES:
+            try:
+                resp = self._query(
+                    analytics, ids=ids, start=start, end=end,
+                    metrics=["views", "estimatedMinutesWatched"],
+                    dimensions="insightTrafficSourceDetail",
+                    filters=f"insightTrafficSourceType=={source_type}",
+                    sort="-views", max_results=25, label=f"traffic_detail.{source_type}",
+                )
+            except HttpError as exc:
+                self.log.warning("traffic_source_detail %s unavailable: %s", source_type, exc)
+                detail_failed = True
+                continue
+            detail_rows.extend(
+                normalize.traffic_source_detail_rows(resp, cid, "", source_type, ws, we)
+            )
+        if detail_rows:
+            batch.tables["traffic_source_detail"] = detail_rows
+        if detail_failed:
+            batch.degraded.append("traffic_source_detail")
+
+        # W1 retention — one call per video; the heaviest report. Limit to videos with any
+        # views in the window when that's cheap to know, else all uploaded videos.
+        hb("retention")
+        video_ids = self._retention_video_ids(channel, analytics, info, ids, start, end)
+        retention_rows: list[dict] = []
+        retention_failed = False
+        for vid in video_ids:
+            try:
+                resp = self._query(
+                    analytics, ids=ids, start=start, end=end,
+                    metrics=["audienceWatchRatio", "relativeRetentionPerformance"],
+                    dimensions="elapsedVideoTimeRatio",
+                    filters=f"video=={vid};audienceType==ORGANIC", label="retention",
+                )
+            except HttpError as exc:
+                self.log.warning("retention for %s unavailable: %s", vid, exc)
+                retention_failed = True
+                continue
+            retention_rows.extend(
+                normalize.retention_rows(resp, cid, vid, "ORGANIC", ws, we)
+            )
+        if retention_rows:
+            batch.tables["video_retention"] = retention_rows
+        if retention_failed:
+            batch.degraded.append("video_retention")
+
+        return batch
+
+    def _retention_video_ids(self, channel, analytics, info, ids, start, end) -> list[str]:
+        """Videos worth pulling retention for: those with views in the window if we can get
+        the list cheaply (one ``video`` report), else all uploaded videos."""
+        try:
+            resp = self._query(analytics, ids=ids, start=start, end=end, metrics=["views"],
+                               dimensions="video", sort="-views", max_results=200,
+                               label="retention.videos")
+            vids = [r.get("video_id") for r in normalize.normalize_rows(resp)]
+            vids = [v for v in vids if v]
+            if vids:
+                return vids
+        except HttpError as exc:
+            self.log.info("retention video list unavailable, falling back to uploads: %s", exc)
+        if info.get("uploads_playlist_id"):
+            return self._list_video_ids(channel, info["uploads_playlist_id"])
+        return []

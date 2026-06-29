@@ -1,0 +1,14 @@
+{
+  "columnHeaders": [
+    {"name": "country"},
+    {"name": "views"},
+    {"name": "estimatedMinutesWatched"},
+    {"name": "averageViewPercentage"}
+  ],
+  "rows": [
+    ["US", 1800, 9000, 48.5],
+    ["GB", 420, 2100, 51.2],
+    ["CA", 310, 1500, 49.0],
+    ["AU", 190, 880, 47.3]
+  ]
+}

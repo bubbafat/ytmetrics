@@ -1,0 +1,16 @@
+{
+  "columnHeaders": [
+    {"name": "day"},
+    {"name": "subscribedStatus"},
+    {"name": "views"},
+    {"name": "estimatedMinutesWatched"}
+  ],
+  "rows": [
+    ["2026-06-01", "SUBSCRIBED", 320, 1600],
+    ["2026-06-01", "UNSUBSCRIBED", 600, 1200],
+    ["2026-06-02", "SUBSCRIBED", 280, 1450],
+    ["2026-06-02", "UNSUBSCRIBED", 455, 980],
+    ["2026-06-03", "SUBSCRIBED", 410, 2050],
+    ["2026-06-03", "UNSUBSCRIBED", 750, 1500]
+  ]
+}

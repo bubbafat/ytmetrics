@@ -37,9 +37,22 @@ def _v2_drop_renamed_channel_tables(conn: sqlite3.Connection) -> None:
         conn.execute(f"DROP TABLE IF EXISTS {old};")
 
 
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(r[1] == column for r in conn.execute(f"PRAGMA table_info({table})"))
+
+
+def _v3_add_subscriber_count(conn: sqlite3.Connection) -> None:
+    """v3 adds ``subscriber_count`` to the channels dim. New windowed/daily insight tables
+    are created by _create_all (additive, IF NOT EXISTS); only the existing ``channels``
+    table needs an ALTER since IF NOT EXISTS won't add a column to it."""
+    if not _column_exists(conn, "channels", "subscriber_count"):
+        conn.execute("ALTER TABLE channels ADD COLUMN subscriber_count INTEGER")
+
+
 # Upgrade steps keyed by the version they produce. Empty for v1 (handled by _create_all).
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _v2_drop_renamed_channel_tables,
+    3: _v3_add_subscriber_count,
 }
 
 

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Weekly launchd job for ytmetrics' windowed INSIGHTS (retention, demographics,
+  geography, devices, search terms). These are period aggregates that don't change
+  much day to day, and retention costs one API call per video — so run them weekly,
+  NOT daily. The daily `pull` job already covers the daily tables (incl.
+  subscribed_status_daily and the subscriber_count anchor); this is a separate job.
+
+  Setup:
+    1. Edit the absolute paths below (the `uv` binary path; WorkingDirectory = your checkout).
+    2. cp this file to ~/Library/LaunchAgents/com.ytmetrics.weekly.plist  (drop ".example")
+    3. launchctl load ~/Library/LaunchAgents/com.ytmetrics.weekly.plist
+    4. launchctl start com.ytmetrics.weekly   # run once now to verify
+  Runs headless from the stored refresh token; run `ytmetrics list-channels` once first.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ytmetrics.weekly</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/uv</string>
+    <string>run</string>
+    <string>ytmetrics</string>
+    <string>insights</string>
+    <string>--days</string>
+    <string>90</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/robert/src/ytmetrics</string>
+
+  <!-- Run weekly: Sundays (Weekday 0) at 07:00 local time, after the daily pull. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key><integer>0</integer>
+    <key>Hour</key><integer>7</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/robert/src/ytmetrics/logs/launchd.weekly.out</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/robert/src/ytmetrics/logs/launchd.weekly.err</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

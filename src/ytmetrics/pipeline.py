@@ -58,6 +58,7 @@ def _store_batch(
                         "channel_id": cid,
                         "title": batch.channel_title,
                         "uploads_playlist_id": batch.uploads_playlist_id,
+                        "subscriber_count": batch.subscriber_count,
                     }
                 ],
                 pulled_at=pulled_at,
@@ -129,6 +130,89 @@ def run_pull(
             )
         except Exception as exc:  # isolation: log and continue with other channels
             log.exception("pull FAILED: channel=%s: %s", channel.name, exc)
+            cs = ChannelSummary(name=channel.name, channel_id=channel.channel_id, ok=False,
+                                error=str(exc))
+        summary.channels.append(cs)
+
+    counter = getattr(source, "counter", None)
+    summary.api_calls = getattr(counter, "count", 0)
+    return summary
+
+
+def _store_insights_batch(
+    store: SqliteStore, channel: ChannelConfig, batch: PullBatch
+) -> ChannelSummary:
+    """Write a windowed-insights batch through the generic merge-upsert. Unlike the daily
+    pull this does NOT touch channel freshness / data_through (windowed facts have no day
+    dimension), but it does refresh the channels dim (title / subscriber_count)."""
+    cid = batch.channel_id
+    pulled_at = iso_now_pt()
+    store.begin()
+    try:
+        if batch.channel_title or batch.uploads_playlist_id or batch.subscriber_count is not None:
+            store.upsert(
+                "channels",
+                [
+                    {
+                        "channel_id": cid,
+                        "title": batch.channel_title,
+                        "uploads_playlist_id": batch.uploads_playlist_id,
+                        "subscriber_count": batch.subscriber_count,
+                    }
+                ],
+                pulled_at=pulled_at,
+            )
+        upserts: dict[str, UpsertResult] = {}
+        for table, rows in batch.tables.items():
+            upserts[table] = store.upsert(
+                table, rows, track_revisions=channel.track_revisions, pulled_at=pulled_at
+            )
+        store.commit()
+    except Exception:
+        store.rollback()
+        raise
+    return ChannelSummary(
+        name=channel.name,
+        channel_id=cid,
+        ok=True,
+        upserts=upserts,
+        degraded=batch.degraded,
+    )
+
+
+def run_insights(
+    store: SqliteStore,
+    source: Source,
+    channels: list[ChannelConfig],
+    start: date,
+    end: date,
+    *,
+    include_demographics: bool = True,
+    heartbeat: Heartbeat | None = None,
+    logger: logging.Logger | None = None,
+) -> RunSummary:
+    """Pull the windowed insight reports (W1–W4, W6) for each channel. Per-channel
+    isolation mirrors ``run_pull``; one channel failing never stops the others."""
+    log = logger or logging.getLogger("ytmetrics")
+    summary = RunSummary()
+    for channel in channels:
+        if heartbeat:
+            heartbeat.update(f"channel={channel.name} insights {start}..{end}")
+        log.info("insights start: channel=%s window=%s..%s", channel.name, start, end)
+        try:
+            batch = source.fetch_insights(
+                channel, start, end,
+                include_demographics=include_demographics, heartbeat=heartbeat,
+            )
+            cs = _store_insights_batch(store, channel, batch)
+            log.info(
+                "insights done: channel=%s rows=%s degraded=%s",
+                channel.name,
+                {t: (u.inserted + u.updated) for t, u in cs.upserts.items()},
+                cs.degraded,
+            )
+        except Exception as exc:  # isolation: log and continue with other channels
+            log.exception("insights FAILED: channel=%s: %s", channel.name, exc)
             cs = ChannelSummary(name=channel.name, channel_id=channel.channel_id, ok=False,
                                 error=str(exc))
         summary.channels.append(cs)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,7 @@ CHANNELS = TableSpec(
         ("uploads_playlist_id", "TEXT"),
         ("last_successful_pull", "TEXT"),
         ("data_through", "TEXT"),
+        ("subscriber_count", "INTEGER"),
     ],
     pk=["channel_id"],
 )
@@ -255,6 +256,112 @@ VIDEO_DISCOVERY_DAILY = TableSpec(
     revisioned=True,
 )
 
+# --- Windowed insight tables ------------------------------------------------------
+# Aggregate-over-a-window facts (no ``day`` dimension): same shape as video_referrers
+# (window_start/window_end in the PK + pulled_at). Pulled by the ``insights`` command,
+# not the daily pull. See INSIGHTS_PLAN.md (W1–W4, W6).
+
+VIDEO_RETENTION = TableSpec(
+    name="video_retention",
+    columns=[
+        ("channel_id", "TEXT"),
+        ("video_id", "TEXT"),
+        ("audience_type", "TEXT"),
+        ("elapsed_ratio", "REAL"),
+        ("audience_watch_ratio", "REAL"),
+        ("relative_retention_performance", "REAL"),
+        ("window_start", "TEXT"),
+        ("window_end", "TEXT"),
+        ("pulled_at", "TEXT"),
+    ],
+    pk=["channel_id", "video_id", "audience_type", "elapsed_ratio", "window_start", "window_end"],
+    ts_col="pulled_at",
+)
+
+CHANNEL_DEMOGRAPHICS = TableSpec(
+    name="channel_demographics",
+    columns=[
+        ("channel_id", "TEXT"),
+        ("age_group", "TEXT"),
+        ("gender", "TEXT"),
+        ("subscribed_status", "TEXT"),
+        ("viewer_percentage", "REAL"),
+        ("window_start", "TEXT"),
+        ("window_end", "TEXT"),
+        ("pulled_at", "TEXT"),
+    ],
+    pk=["channel_id", "age_group", "gender", "subscribed_status", "window_start", "window_end"],
+    ts_col="pulled_at",
+)
+
+AUDIENCE_GEOGRAPHY = TableSpec(
+    name="audience_geography",
+    columns=[
+        ("channel_id", "TEXT"),
+        ("country", "TEXT"),
+        ("views", "INTEGER"),
+        ("estimated_minutes_watched", "INTEGER"),
+        ("average_view_percentage", "REAL"),
+        ("window_start", "TEXT"),
+        ("window_end", "TEXT"),
+        ("pulled_at", "TEXT"),
+    ],
+    pk=["channel_id", "country", "window_start", "window_end"],
+    ts_col="pulled_at",
+)
+
+AUDIENCE_DEVICES = TableSpec(
+    name="audience_devices",
+    columns=[
+        ("channel_id", "TEXT"),
+        ("device_type", "TEXT"),
+        ("operating_system", "TEXT"),
+        ("views", "INTEGER"),
+        ("estimated_minutes_watched", "INTEGER"),
+        ("window_start", "TEXT"),
+        ("window_end", "TEXT"),
+        ("pulled_at", "TEXT"),
+    ],
+    pk=["channel_id", "device_type", "operating_system", "window_start", "window_end"],
+    ts_col="pulled_at",
+)
+
+TRAFFIC_SOURCE_DETAIL = TableSpec(
+    name="traffic_source_detail",
+    columns=[
+        ("channel_id", "TEXT"),
+        ("video_id", "TEXT"),
+        ("traffic_source_type", "TEXT"),
+        ("detail", "TEXT"),
+        ("views", "INTEGER"),
+        ("estimated_minutes_watched", "INTEGER"),
+        ("window_start", "TEXT"),
+        ("window_end", "TEXT"),
+        ("pulled_at", "TEXT"),
+    ],
+    pk=["channel_id", "video_id", "traffic_source_type", "detail", "window_start", "window_end"],
+    ts_col="pulled_at",
+)
+
+# --- Subscribed-status daily ------------------------------------------------------
+# subscribedStatus composes with ``day`` (unlike the windowed insights), so this rides
+# the normal daily pull. See INSIGHTS_PLAN.md (W5).
+
+SUBSCRIBED_STATUS_DAILY = TableSpec(
+    name="subscribed_status_daily",
+    columns=[
+        ("channel_id", "TEXT"),
+        ("date", "TEXT"),
+        ("subscribed_status", "TEXT"),
+        ("views", "INTEGER"),
+        ("estimated_minutes_watched", "INTEGER"),
+        ("last_updated", "TEXT"),
+    ],
+    pk=["channel_id", "date", "subscribed_status"],
+    ts_col="last_updated",
+    revisioned=True,
+)
+
 # --- User-maintained dimension ----------------------------------------------------
 # Hand-tagged topics per video. Never written by the pull — only by the owner.
 
@@ -282,6 +389,12 @@ UPSERT_TABLES: list[TableSpec] = [
     VIDEO_REVENUE_DAILY,
     VIDEO_TRAFFIC_SOURCES_DAILY,
     VIDEO_DISCOVERY_DAILY,
+    VIDEO_RETENTION,
+    CHANNEL_DEMOGRAPHICS,
+    AUDIENCE_GEOGRAPHY,
+    AUDIENCE_DEVICES,
+    TRAFFIC_SOURCE_DETAIL,
+    SUBSCRIBED_STATUS_DAILY,
     VIDEO_TOPICS,
 ]
 
@@ -299,9 +412,26 @@ INDEXES: list[str] = [
     "CREATE INDEX IF NOT EXISTS ix_video_discovery_daily_date ON video_discovery_daily(date);",
     "CREATE INDEX IF NOT EXISTS ix_video_discovery_daily_video "
     "ON video_discovery_daily(video_id);",
+    "CREATE INDEX IF NOT EXISTS ix_video_retention_video ON video_retention(video_id);",
+    "CREATE INDEX IF NOT EXISTS ix_traffic_source_detail_video "
+    "ON traffic_source_detail(video_id);",
+    "CREATE INDEX IF NOT EXISTS ix_subscribed_status_daily_date "
+    "ON subscribed_status_daily(date);",
 ]
 
 TABLES_BY_NAME: dict[str, TableSpec] = {t.name: t for t in UPSERT_TABLES}
+
+# Windowed insight snapshots pulled by `ytmetrics insights` on a cadence. Each run appends
+# a whole new snapshot (keyed by window_start/window_end), so these accumulate per-run and
+# are subject to the `insights_retention_weeks` prune. NOTE: `video_referrers` is windowed
+# too but is an on-demand, one-off attribution pull — deliberately NOT pruned here.
+INSIGHT_SNAPSHOT_TABLES: list[str] = [
+    "video_retention",
+    "channel_demographics",
+    "audience_geography",
+    "audience_devices",
+    "traffic_source_detail",
+]
 
 # --- Non-upsert tables ------------------------------------------------------------
 

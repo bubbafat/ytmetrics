@@ -1,0 +1,15 @@
+{
+  "columnHeaders": [
+    {"name": "ageGroup"},
+    {"name": "gender"},
+    {"name": "viewerPercentage"}
+  ],
+  "rows": [
+    ["age25-34", "male", 28.5],
+    ["age25-34", "female", 12.0],
+    ["age35-44", "male", 22.3],
+    ["age35-44", "female", 9.7],
+    ["age18-24", "male", 18.5],
+    ["age18-24", "female", 9.0]
+  ]
+}

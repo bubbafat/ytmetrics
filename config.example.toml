@@ -14,6 +14,7 @@ log_dir               = "logs"
 log_level             = "INFO"      # DEBUG via `--verbose`; secrets are always redacted
 heartbeat_seconds     = 3           # cadence of the "still working" status line
 freshness_warn_days   = 3           # warn if data_through falls this far behind today
+insights_retention_weeks = 26       # keep ~6mo of windowed insight snapshots; 0 = keep all
 
 # --- Optional failure hook (default off) ---
 # Exactly one of command / webhook may be set.

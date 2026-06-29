@@ -1,6 +1,6 @@
 """ytmetrics command-line interface.
 
-Commands: pull, list-channels, doctor, info, referrers, backups, restore.
+Commands: pull, insights, list-channels, doctor, info, referrers, backups, restore.
 Only `list-channels` is interactive (it can open a browser to mint the first token);
 everything else runs headless from the stored refresh token.
 """
@@ -68,6 +68,20 @@ def _window(args) -> tuple[date, date]:
         start = parse_date(args.start)
         end = parse_date(args.end) if args.end else default_end_date()
         return start, end
+    return trailing_window(args.days)
+
+
+def _insights_window(args) -> tuple[date, date]:
+    """An explicit ``--window START:END`` wins; otherwise a trailing ``--days`` window
+    (so a scheduled job can ask for a rolling window without hardcoding dates)."""
+    if getattr(args, "window", None):
+        try:
+            start_s, end_s = args.window.split(":", 1)
+        except ValueError as exc:
+            raise SystemExit(
+                "--window must be START:END, e.g. 2026-05-01:2026-05-31"
+            ) from exc
+        return parse_date(start_s), parse_date(end_s)
     return trailing_window(args.days)
 
 
@@ -216,6 +230,41 @@ def cmd_referrers(args) -> int:
     return 0
 
 
+def cmd_insights(args) -> int:
+    config = _load(args)
+    setup_logging(config.log_dir, config.log_level, args.verbose)
+    log = get_logger()
+    channels = _select_channels(config, args.channel)
+    start, end = _insights_window(args)
+
+    from . import pipeline
+    from .sources.live import LiveSource
+    from .store.sqlite_store import SqliteStore
+
+    source = LiveSource(config.max_api_calls_per_run, interactive=args.interactive, logger=log)
+    with SqliteStore(config.db_path) as store:
+        with Heartbeat(config.heartbeat_seconds, "starting insights") as hb:
+            summary = pipeline.run_insights(
+                store, source, channels, start, end,
+                include_demographics=not args.no_demographics, heartbeat=hb, logger=log,
+            )
+        pruned = store.prune_insight_snapshots(config.insights_retention_weeks)
+        if pruned:
+            total = sum(pruned.values())
+            log.info("pruned %d old insight-snapshot rows (>%dw): %s",
+                     total, config.insights_retention_weeks, pruned)
+
+    print(f"\ninsights {fmt_date(start)}..{fmt_date(end)}  ({summary.api_calls} api calls)")
+    for c in summary.channels:
+        if not c.ok:
+            print(f"  ✗ {c.name}: FAILED — {c.error}")
+            continue
+        rows = {t: u.inserted + u.updated for t, u in c.upserts.items()}
+        deg = f"  degraded={c.degraded}" if c.degraded else ""
+        print(f"  ✓ {c.name}: {rows}{deg}")
+    return 1 if summary.any_failed else 0
+
+
 def cmd_backups(args) -> int:
     config = _load(args)
     from .store import backup
@@ -331,6 +380,16 @@ def build_parser() -> argparse.ArgumentParser:
     ref.add_argument("--channel", help="channel name (default: first configured)")
     ref.add_argument("--interactive", action="store_true")
     ref.set_defaults(func=cmd_referrers)
+
+    ins = add_sub("insights", help="pull windowed audience/retention/search insights")
+    ins.add_argument("--window", help="START:END (YYYY-MM-DD:YYYY-MM-DD); overrides --days")
+    ins.add_argument("--days", type=int, default=90,
+                     help="trailing-window size in days when --window is omitted (default 90)")
+    ins.add_argument("--channel", help="only this channel (default: all configured)")
+    ins.add_argument("--no-demographics", action="store_true",
+                     help="skip the demographics report")
+    ins.add_argument("--interactive", action="store_true")
+    ins.set_defaults(func=cmd_insights)
 
     bk = add_sub("backups", help="list db snapshots")
     bk.set_defaults(func=cmd_backups)

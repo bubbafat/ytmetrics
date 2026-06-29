@@ -1,0 +1,13 @@
+{
+  "columnHeaders": [
+    {"name": "insightTrafficSourceDetail"},
+    {"name": "views"},
+    {"name": "estimatedMinutesWatched"}
+  ],
+  "rows": [
+    ["how to get started", 240, 1200],
+    ["quick tips", 180, 540],
+    ["getting started tutorial", 130, 900],
+    ["beginner guide", 95, 600]
+  ]
+}

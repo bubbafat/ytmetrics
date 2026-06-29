@@ -21,6 +21,15 @@ API_TO_COL: dict[str, str] = {
     "insightTrafficSourceType": "traffic_source_type",
     "insightTrafficSourceDetail": "referrer_detail",
     "video": "video_id",
+    # audience / insight dimensions
+    "ageGroup": "age_group",
+    "gender": "gender",
+    "country": "country",
+    "deviceType": "device_type",
+    "operatingSystem": "operating_system",
+    "elapsedVideoTimeRatio": "elapsed_ratio",
+    "audienceType": "audience_type",
+    "subscribedStatus": "subscribed_status",
     # activity metrics
     "views": "views",
     "engagedViews": "engaged_views",
@@ -49,7 +58,16 @@ API_TO_COL: dict[str, str] = {
     "playbackBasedCpm": "playback_based_cpm",
     "monetizedPlaybacks": "monetized_playbacks",
     "adImpressions": "ad_impressions",
+    # audience / insight metrics
+    "viewerPercentage": "viewer_percentage",
+    "audienceWatchRatio": "audience_watch_ratio",
+    "relativeRetentionPerformance": "relative_retention_performance",
 }
+
+# insightTrafficSourceDetail maps to ``referrer_detail`` for video_referrers; the
+# traffic_source_detail table wants the column named ``detail``. This per-call override
+# is applied by the dedicated builder below (the global map is left unchanged).
+_DETAIL_OVERRIDE = {"insightTrafficSourceDetail": "detail"}
 
 
 def normalize_rows(resp: dict[str, Any], extra: dict[str, Any] | None = None) -> list[dict]:
@@ -154,3 +172,91 @@ def referrer_rows(
         # For video-referring source types the detail IS a video id.
         r["referrer_video_id"] = r.get("referrer_detail")
     return rows
+
+
+# --- Windowed insight builders (W1–W4, W6) ---------------------------------------
+# All carry channel_id + window_start/window_end; most are plain ``normalize_rows``.
+
+
+def retention_rows(
+    resp: dict[str, Any],
+    channel_id: str,
+    video_id: str,
+    audience_type: str,
+    window_start: str,
+    window_end: str,
+) -> list[dict]:
+    return normalize_rows(
+        resp,
+        {
+            "channel_id": channel_id,
+            "video_id": video_id,
+            "audience_type": audience_type,
+            "window_start": window_start,
+            "window_end": window_end,
+        },
+    )
+
+
+def demographics_rows(
+    resp: dict[str, Any], channel_id: str, window_start: str, window_end: str
+) -> list[dict]:
+    # v1 query is ageGroup,gender only; store subscribed_status='ALL' so the PK is stable.
+    return normalize_rows(
+        resp,
+        {
+            "channel_id": channel_id,
+            "subscribed_status": "ALL",
+            "window_start": window_start,
+            "window_end": window_end,
+        },
+    )
+
+
+def geography_rows(
+    resp: dict[str, Any], channel_id: str, window_start: str, window_end: str
+) -> list[dict]:
+    return normalize_rows(
+        resp,
+        {"channel_id": channel_id, "window_start": window_start, "window_end": window_end},
+    )
+
+
+def devices_rows(
+    resp: dict[str, Any], channel_id: str, window_start: str, window_end: str
+) -> list[dict]:
+    return normalize_rows(
+        resp,
+        {"channel_id": channel_id, "window_start": window_start, "window_end": window_end},
+    )
+
+
+def traffic_source_detail_rows(
+    resp: dict[str, Any],
+    channel_id: str,
+    video_id: str,
+    traffic_source_type: str,
+    window_start: str,
+    window_end: str,
+) -> list[dict]:
+    """Like normalize_rows but maps insightTrafficSourceDetail -> ``detail`` (not
+    ``referrer_detail``), for the generalized traffic_source_detail table."""
+    headers = [h["name"] for h in resp.get("columnHeaders", [])]
+    cols = [_DETAIL_OVERRIDE.get(h, API_TO_COL.get(h, h)) for h in headers]
+    extra = {
+        "channel_id": channel_id,
+        "video_id": video_id,
+        "traffic_source_type": traffic_source_type,
+        "window_start": window_start,
+        "window_end": window_end,
+    }
+    out: list[dict[str, Any]] = []
+    for raw in resp.get("rows", []) or []:
+        rec: dict[str, Any] = dict(zip(cols, raw, strict=True))
+        rec.update(extra)
+        out.append(rec)
+    return out
+
+
+def subscribed_status_rows(resp: dict[str, Any], channel_id: str) -> list[dict]:
+    return normalize_rows(resp, {"channel_id": channel_id})

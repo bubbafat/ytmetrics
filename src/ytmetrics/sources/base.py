@@ -37,6 +37,7 @@ class PullBatch:
     channel_id: str  # resolved UC… id (config "mine" is resolved by the source)
     channel_title: str | None = None
     uploads_playlist_id: str | None = None
+    subscriber_count: int | None = None  # current total from Data API channels.list (W7)
     videos: list[dict[str, Any]] = field(default_factory=list)
     tables: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     degraded: list[str] = field(default_factory=list)  # reports skipped/degraded
@@ -56,3 +57,15 @@ class Source(ABC):
         heartbeat: Heartbeat | None = None,
     ) -> PullBatch:
         """Return the normalized batch for ``channel`` over the inclusive [start, end]."""
+
+    @abstractmethod
+    def fetch_insights(
+        self,
+        channel: ChannelConfig,
+        start: date,
+        end: date,
+        *,
+        include_demographics: bool = True,
+        heartbeat: Heartbeat | None = None,
+    ) -> PullBatch:
+        """Return the windowed-insight batch (W1–W4, W6) for ``channel`` over [start, end]."""

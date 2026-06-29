@@ -15,13 +15,14 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date, timedelta
 from pathlib import Path
 from types import TracebackType
 from typing import Any
 
-from ..timeutil import iso_now_pt
+from ..timeutil import fmt_date, iso_now_pt, today_pt
 from . import migrations
-from .schema import TABLES_BY_NAME, TableSpec
+from .schema import INSIGHT_SNAPSHOT_TABLES, TABLES_BY_NAME, TableSpec
 
 _CHUNK = 400
 
@@ -222,3 +223,23 @@ class SqliteStore:
 
     def query(self, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
         return list(self._conn.execute(sql, list(params)))
+
+    # -- retention ---------------------------------------------------------------
+    def prune_insight_snapshots(
+        self, retention_weeks: int, *, today: date | None = None
+    ) -> dict[str, int]:
+        """Drop windowed insight snapshots whose ``window_end`` is older than
+        ``retention_weeks`` weeks. Keeps a bounded rolling history of snapshots (the daily
+        fact tables are never touched). ``retention_weeks <= 0`` disables pruning."""
+        if retention_weeks <= 0:
+            return {}
+        cutoff = fmt_date((today or today_pt()) - timedelta(weeks=retention_weeks))
+        removed: dict[str, int] = {}
+        for table in INSIGHT_SNAPSHOT_TABLES:
+            cur = self._conn.execute(
+                f"DELETE FROM {table} WHERE window_end < ?", (cutoff,)
+            )
+            if cur.rowcount:
+                removed[table] = cur.rowcount
+        self._conn.commit()
+        return removed

@@ -47,6 +47,7 @@ class Config:
     log_level: str
     heartbeat_seconds: int
     freshness_warn_days: int
+    insights_retention_weeks: int
     on_failure: dict[str, str] | None
     channels: list[ChannelConfig] = field(default_factory=list)
 
@@ -125,6 +126,7 @@ def load_config(path: str | Path) -> Config:
         log_level=str(raw.get("log_level", "INFO")).upper(),
         heartbeat_seconds=int(raw.get("heartbeat_seconds", 3)),
         freshness_warn_days=int(raw.get("freshness_warn_days", 3)),
+        insights_retention_weeks=int(raw.get("insights_retention_weeks", 26)),
         on_failure=on_failure,
         channels=channels,
     )

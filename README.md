@@ -86,6 +86,20 @@ launchctl start com.ytmetrics.daily        # run once now to verify
 It runs headless from the stored refresh token (no browser after the first
 `list-channels`). stdout/stderr are captured to `logs/launchd.out` / `logs/launchd.err`.
 
+The daily job covers the daily tables (including `subscribed_status_daily` and the
+`subscriber_count` anchor). The **windowed insights** (retention, demographics, geography,
+devices, search terms) are *not* part of `pull` — they run via the separate `insights`
+command. Schedule them weekly with `scheduling/com.ytmetrics.weekly.plist.example`, which
+runs `ytmetrics insights --days 90` (a rolling 90-day window; retention is one API call per
+video, so weekly — not daily — is the right cadence):
+```bash
+launchctl load ~/Library/LaunchAgents/com.ytmetrics.weekly.plist
+launchctl start com.ytmetrics.weekly       # run once now to verify
+```
+Each insights run appends a fresh snapshot, so the windowed tables grow by one snapshot per
+run. `insights` prunes snapshots older than `insights_retention_weeks` (default 26; `0`
+keeps all) after each run, leaving the daily history untouched.
+
 ## Deploy elsewhere (later)
 
 Because everything is config + token files and the entrypoint is non-interactive, the same
