@@ -16,6 +16,7 @@ clears a fixed threshold.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -52,7 +53,7 @@ def _direction(p: float | None) -> str:
     return "up" if p > 0 else "down"
 
 
-def sparkline(values: list[float]) -> str:
+def sparkline(values: Sequence[float]) -> str:
     """Map a series onto the 8-char block ramp (min→▁, max→█). Flat series → all mid."""
     nums = [float(v or 0) for v in values]
     if not nums:
@@ -128,9 +129,9 @@ def compute(db_path: str | Path, *, today=None, warn_days: int = 3) -> dict:
         # 7-day baseline = the 7 days ending at prev (latest-7 .. latest-1), averaged.
         base_days = [(latest_d - timedelta(days=n)).isoformat() for n in range(7, 0, -1)]
         # Only count days that actually have data (handles <8 days gracefully).
+        ph = ",".join("?" * len(base_days))
         have = {r[0] for r in c.execute(
-            "SELECT DISTINCT date FROM channel_daily WHERE date IN (%s)"
-            % ",".join("?" * len(base_days)), base_days)}
+            f"SELECT DISTINCT date FROM channel_daily WHERE date IN ({ph})", base_days)}
         present = [d for d in base_days if d in have]
 
         cur = _day_stats(c, latest)
@@ -233,10 +234,10 @@ def _traffic_shift(c, latest: str, present: list[str]) -> dict | None:
     rows = c.execute(
         "SELECT traffic_source_type t, coalesce(sum(views),0) v "
         "FROM channel_traffic_sources_daily WHERE date=? GROUP BY t", (latest,)).fetchall()
+    ph = ",".join("?" * len(present))
     avgs = {r["t"]: r["v"] / len(present) for r in c.execute(
         "SELECT traffic_source_type t, coalesce(sum(views),0) v "
-        "FROM channel_traffic_sources_daily WHERE date IN (%s) GROUP BY t"
-        % ",".join("?" * len(present)), present)}
+        f"FROM channel_traffic_sources_daily WHERE date IN ({ph}) GROUP BY t", present)}
     best = None
     for r in rows:
         latest_v, avg = r["v"], avgs.get(r["t"], 0.0)

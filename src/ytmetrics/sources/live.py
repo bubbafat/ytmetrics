@@ -610,8 +610,9 @@ class LiveSource(Source):
             resp = self._query(analytics, ids=ids, start=start, end=end, metrics=["views"],
                                dimensions="video", sort="-views", max_results=200,
                                label="retention.videos")
-            vids = [r.get("video_id") for r in normalize.normalize_rows(resp)]
-            vids = [v for v in vids if v]
+            vids: list[str] = [
+                v for v in (r.get("video_id") for r in normalize.normalize_rows(resp)) if v
+            ]
             if vids:
                 return vids
         except HttpError as exc:

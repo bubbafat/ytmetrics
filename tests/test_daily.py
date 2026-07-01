@@ -80,6 +80,7 @@ def test_est_window_anchored_to_freshest_day(tmp_path):
     # 6 consecutive days; the newest REVISION_DAYS+1 (=3) are est, older ones finalized —
     # anchored to the latest day in the db, not to today.
     import sqlite3
+
     from ytmetrics.store.sqlite_store import SqliteStore
     db = tmp_path / "t.db"
     with SqliteStore(db):
@@ -147,7 +148,7 @@ def test_sparkline_length_and_chars():
 
 # --- mailer.send_text --------------------------------------------------------------
 class _FakeSMTP:
-    instances: list["_FakeSMTP"] = []
+    instances: list[_FakeSMTP] = []
 
     def __init__(self, host, port):
         self.host, self.port, self.sent, self.logged_in = host, port, None, False

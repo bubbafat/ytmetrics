@@ -10,9 +10,10 @@ from __future__ import annotations
 import os
 import smtplib
 import ssl
+from collections.abc import Callable
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Callable
+from typing import cast
 
 from .config import EmailConfig
 from .logging_setup import register_secret
@@ -115,7 +116,9 @@ def build_html_message(
     if images:
         # The HTML alternative is the last payload; attach inline images *to it* so they
         # form a `multipart/related` and resolve the `cid:` references.
-        html_part = msg.get_payload()[-1]
+        parts = msg.get_payload()
+        assert isinstance(parts, list)
+        html_part = cast(EmailMessage, parts[-1])
         for cid, data in images.items():
             html_part.add_related(
                 data, maintype="image", subtype="png",

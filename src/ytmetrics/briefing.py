@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 import textwrap
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import median
 
@@ -296,7 +296,7 @@ def _p_working(d, fig, ctx):
     for sp in ax.spines.values():
         sp.set_visible(False)
     pad = vmax * 0.02
-    for yi, (lab, v) in enumerate(zip(labels, vals)):
+    for yi, (lab, v) in enumerate(zip(labels, vals, strict=False)):
         ax.text(pad, yi, lab, va="center", ha="left", color=NAVY, fontsize=11,
                 family=d.body)                                   # title inside the bar
         ax.text(v + pad, yi, f"{v:.1f}", va="center", ha="left", color=CREAM, fontsize=11,
@@ -416,8 +416,9 @@ def _p_discovery(d, fig, ctx):
         ax.set_title("Traffic mix (28d)", color=CREAM, fontsize=12, family=d.body)
     # top search terms
     we = _latest_window_end(c, "traffic_source_detail")
-    terms = _rows(c, "SELECT detail, views FROM traffic_source_detail WHERE traffic_source_type="
-                     "'YT_SEARCH' AND window_end=? ORDER BY views DESC LIMIT 8", (we,)) if we else []
+    terms = _rows(
+        c, "SELECT detail, views FROM traffic_source_detail WHERE traffic_source_type="
+        "'YT_SEARCH' AND window_end=? ORDER BY views DESC LIMIT 8", (we,)) if we else []
     fig.text(0.36, 0.66, "TOP SEARCHES THAT FIND YOU", color=CORAL, fontsize=12, family=d.body,
              fontweight="bold")
     y = 0.60
@@ -466,8 +467,9 @@ def _p_actions(d, fig, ctx):
                    "FROM video_daily vd JOIN videos v USING(video_id) GROUP BY vd.video_id "
                    "HAVING sum(vd.views)>200 ORDER BY spk DESC LIMIT 1")
     wse = _latest_window_end(c, "traffic_source_detail")
-    terms = _rows(c, "SELECT detail FROM traffic_source_detail WHERE traffic_source_type="
-                     "'YT_SEARCH' AND window_end=? ORDER BY views DESC LIMIT 3", (wse,)) if wse else []
+    terms = _rows(
+        c, "SELECT detail FROM traffic_source_detail WHERE traffic_source_type="
+        "'YT_SEARCH' AND window_end=? ORDER BY views DESC LIMIT 3", (wse,)) if wse else []
     term_str = ", ".join(f"“{r['detail']}”" for r in terms) or "your top ship/port terms"
 
     actions = []

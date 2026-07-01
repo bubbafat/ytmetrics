@@ -37,7 +37,7 @@ def test_build_message_attaches_pdf(tmp_path):
 
 
 class _FakeSMTP:
-    instances: list["_FakeSMTP"] = []
+    instances: list[_FakeSMTP] = []
 
     def __init__(self, host, port):
         self.host, self.port, self.sent, self.logged_in = host, port, None, False
@@ -85,7 +85,8 @@ def test_send_html_multipart_with_inline_image(tmp_path, monkeypatch):
     assert msg.is_multipart()
 
     # collect the leaf parts by content type
-    types = {p.get_content_type() for p in msg.walk() if not p.get_content_maintype() == "multipart"}
+    types = {p.get_content_type() for p in msg.walk()
+             if p.get_content_maintype() != "multipart"}
     assert "text/plain" in types
     assert "text/html" in types
 

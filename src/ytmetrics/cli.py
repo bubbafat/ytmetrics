@@ -287,7 +287,8 @@ def cmd_briefing(args) -> int:
 
         cfg = config.email
         if cfg is None:
-            raise SystemExit("add an [email] section to config.toml to send (see config.example.toml)")
+            raise SystemExit(
+                "add an [email] section to config.toml to send (see config.example.toml)")
         override = (
             [args.email] if isinstance(args.email, str)
             else [r.strip() for r in args.to.split(",")] if args.to
@@ -331,7 +332,8 @@ def cmd_daily(args) -> int:
 
         cfg = config.email
         if cfg is None:
-            raise SystemExit("add an [email] section to config.toml to send (see config.example.toml)")
+            raise SystemExit(
+                "add an [email] section to config.toml to send (see config.example.toml)")
         override = (
             [args.email] if isinstance(args.email, str)
             else [r.strip() for r in args.to.split(",")] if args.to
@@ -481,7 +483,8 @@ def build_parser() -> argparse.ArgumentParser:
     ins.set_defaults(func=cmd_insights)
 
     br = add_sub("briefing", help="generate the weekly channel-intelligence PDF")
-    br.add_argument("--out", help="output PDF path (default reports/empty-besters-briefing-DATE.pdf)")
+    br.add_argument("--out",
+                    help="output PDF path (default reports/empty-besters-briefing-DATE.pdf)")
     br.add_argument("--weeks", type=int, default=1,
                     help="window size in weeks for the week-over-week deltas (default 1)")
     br.add_argument("--email", nargs="?", const=True, default=False,
