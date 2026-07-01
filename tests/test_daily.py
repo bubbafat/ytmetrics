@@ -68,10 +68,33 @@ def test_render_html_embeds_chart_and_escaped_text(tmp_path, fixtures_dir):
     assert html.startswith("<pre")
 
 
-def test_estimated_flag_tracks_today(tmp_path, fixtures_dir):
+def test_latest_day_is_always_estimated(tmp_path, fixtures_dir):
+    # The freshest day we have is what YouTube is still revising, so it's an estimate
+    # regardless of how far behind "today" the API runs (the whole point of the fix).
     db = _populated_db(tmp_path, fixtures_dir)   # latest day = 2026-06-03
     assert daily.compute(db, today=date(2026, 6, 4))["latest_estimated"] is True
-    assert daily.compute(db, today=date(2026, 6, 10))["latest_estimated"] is False
+    assert daily.compute(db, today=date(2026, 6, 29))["latest_estimated"] is True
+
+
+def test_est_window_anchored_to_freshest_day(tmp_path):
+    # 6 consecutive days; the newest REVISION_DAYS+1 (=3) are est, older ones finalized —
+    # anchored to the latest day in the db, not to today.
+    import sqlite3
+    from ytmetrics.store.sqlite_store import SqliteStore
+    db = tmp_path / "t.db"
+    with SqliteStore(db):
+        pass
+    conn = sqlite3.connect(db)
+    for day in ("2026-06-20", "2026-06-21", "2026-06-22", "2026-06-23", "2026-06-24",
+                "2026-06-25"):
+        conn.execute("INSERT INTO channel_daily (channel_id, date, creator_content_type, "
+                     "views) VALUES (?,?,?,?)", ("UC", day, "VIDEO_ON_DEMAND", 100))
+    conn.commit()
+    conn.close()
+    d = daily.compute(db, today=date(2026, 6, 28))   # data ends 06-25; "today" far ahead
+    est = {rd["date"]: rd["estimated"] for rd in d["recent_days"]}
+    assert est["2026-06-25"] is True and est["2026-06-24"] is True and est["2026-06-23"] is True
+    assert est["2026-06-22"] is False and est["2026-06-21"] is False
 
 
 def test_stale_banner_and_subject(tmp_path, fixtures_dir):

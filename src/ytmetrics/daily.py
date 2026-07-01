@@ -27,7 +27,7 @@ VIEWS_THRESHOLD = 0.20   # |latest/avg7 - 1| >= this -> flag views
 REV_THRESHOLD = 0.20     # same, on revenue's own 7-day avg
 TRAFFIC_MULTIPLE = 2.0   # a source's latest >= this × its 7-day avg -> a shift
 TRAFFIC_MIN_VIEWS = 25   # …and at least this many views, so noise doesn't fire
-REVISION_DAYS = 2        # days within this many of "today" are still YouTube estimates
+REVISION_DAYS = 2        # the freshest day + this many behind it are still YouTube estimates
 SPARK = "▁▂▃▄▅▆▇█"       # 8-step block ramp
 
 
@@ -118,7 +118,12 @@ def compute(db_path: str | Path, *, today=None, warn_days: int = 3) -> dict:
         prev = (latest_d - timedelta(days=1)).isoformat()
 
         def _est(day_iso: str) -> bool:
-            return (today_d - datetime.strptime(day_iso, "%Y-%m-%d").date()).days <= REVISION_DAYS
+            # YouTube keeps revising the most-recent few days it has *published*, and the
+            # Analytics API itself runs ~3 days behind. So anchor the "still an estimate"
+            # window to the freshest day we actually have (latest_d), NOT to today — a
+            # today-anchored window never catches real data and would mark everything
+            # "finalized" (the very days that this morning's pull revised).
+            return (latest_d - datetime.strptime(day_iso, "%Y-%m-%d").date()).days <= REVISION_DAYS
 
         # 7-day baseline = the 7 days ending at prev (latest-7 .. latest-1), averaged.
         base_days = [(latest_d - timedelta(days=n)).isoformat() for n in range(7, 0, -1)]
@@ -432,7 +437,7 @@ def _body_blocks(digest: dict) -> list[list[str]]:
         head.append(f"{icon} " + d["headline"])
     else:
         head.append("✅ Normal day — nothing needs you.")
-    freshness = ("estimated — YouTube revises the last ~2 days"
+    freshness = ("estimated — these newest days still revise as YouTube finalizes"
                  if d["latest_estimated"] else "finalized")
     head.append(f"(as of {_fmt_date(d['latest_date'])} · {freshness})")
     blocks.append(head)
