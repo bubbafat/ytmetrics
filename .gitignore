@@ -11,6 +11,7 @@ client_secret*.json
 *.prerestore
 logs/
 backups/
+reports/          # generated briefing PDFs — contain private revenue/subscriber data
 
 # But DO commit the seeded sample database used for offline analysis/tests
 !sample/ytmetrics.sample.db
