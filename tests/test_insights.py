@@ -125,9 +125,10 @@ def test_v3_alter_adds_subscriber_count_to_existing_db(tmp_path):
     assert "subscriber_count" not in cols_before
 
     new_version = migrations.migrate(conn)
-    assert new_version == migrations.CURRENT_SCHEMA_VERSION == 3
+    assert new_version == migrations.CURRENT_SCHEMA_VERSION == 4
     cols_after = {r[1] for r in conn.execute("PRAGMA table_info(channels)")}
-    assert "subscriber_count" in cols_after
+    assert "subscriber_count" in cols_after   # v3 ALTER
+    assert "handle" in cols_after             # v4 ALTER
     # Existing row preserved; new column NULL.
     row = conn.execute("SELECT title, subscriber_count FROM channels").fetchone()
     assert row[0] == "Old" and row[1] is None

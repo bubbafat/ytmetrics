@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -50,6 +50,7 @@ CHANNELS = TableSpec(
         ("last_successful_pull", "TEXT"),
         ("data_through", "TEXT"),
         ("subscriber_count", "INTEGER"),
+        ("handle", "TEXT"),  # the @handle (Data API snippet.customUrl), e.g. "@EmptyBesters"
     ],
     pk=["channel_id"],
 )

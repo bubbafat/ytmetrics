@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -60,12 +60,54 @@ def test_chart_png_returns_png_bytes(tmp_path, fixtures_dir):
     assert png.startswith(b"\x89PNG")
 
 
-def test_render_html_embeds_chart_and_escaped_text(tmp_path, fixtures_dir):
+def test_render_html_is_native_with_sections_and_chart(tmp_path, fixtures_dir):
     d = daily.compute(_populated_db(tmp_path, fixtures_dir), today=date(2026, 6, 5))
     html = daily.render_html(d, img_cid="trend")
-    assert "cid:trend" in html
-    assert "RECENT DAYS" in html          # the escaped digest text is present
-    assert html.startswith("<pre")
+    assert html.startswith("<div")          # native HTML container, not a <pre>
+    assert "<pre" not in html
+    assert "cid:trend" in html              # inline chart still embedded
+    assert "Last 7 days" in html            # week section
+    assert "Month to date" in html          # month section
+    assert "Latest day" in html             # day section label
+    assert "Latest video" in html           # video section
+    assert "Views" in html and "Revenue" in html   # scoreboard metrics
+
+
+def test_render_html_shows_week_and_vs_typical(tmp_path):
+    # a db with two videos: an old one (long history) + a brand-new one to benchmark
+    import sqlite3
+
+    from ytmetrics.store.sqlite_store import SqliteStore
+    db = tmp_path / "t.db"
+    with SqliteStore(db):
+        pass
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO videos (video_id, channel_id, title, published_at, content_type) "
+                 "VALUES (?,?,?,?,?)", ("OLD", "UC", "Old vid", "2026-05-01T00:00:00Z",
+                                       "VIDEO_ON_DEMAND"))
+    conn.execute("INSERT INTO videos (video_id, channel_id, title, published_at, content_type) "
+                 "VALUES (?,?,?,?,?)", ("NEW", "UC", "New vid", "2026-06-24T00:00:00Z",
+                                       "VIDEO_ON_DEMAND"))
+    for n in range(21):                      # 3 weeks of channel + old-video days
+        day = (date(2026, 6, 3) + timedelta(days=n)).isoformat()
+        conn.execute("INSERT INTO channel_daily (channel_id, date, creator_content_type, views, "
+                     "estimated_minutes_watched, subscribers_gained, subscribers_lost) "
+                     "VALUES (?,?,?,?,?,?,?)", ("UC", day, "VIDEO_ON_DEMAND", 100, 300, 2, 1))
+        conn.execute("INSERT INTO video_daily (channel_id, video_id, date, content_type, "
+                     "views, average_view_percentage) VALUES (?,?,?,?,?,?)",
+                     ("UC", "OLD", day, "VIDEO_ON_DEMAND", 40, 45.0))
+    for n in range(3):                       # the new video's first 3 days
+        day = (date(2026, 6, 24) + timedelta(days=n)).isoformat()
+        conn.execute("INSERT INTO video_daily (channel_id, video_id, date, content_type, "
+                     "views, average_view_percentage) VALUES (?,?,?,?,?,?)",
+                     ("UC", "NEW", day, "VIDEO_ON_DEMAND", 30, 50.0))
+    conn.commit()
+    conn.close()
+    d = daily.compute(db, today=date(2026, 6, 26))
+    assert set(d["week"]["views"]) == {"this", "last", "wow"}
+    assert d["latest_video"]["vs_typical"] is None or "median" in d["latest_video"]["vs_typical"]
+    html = daily.render_html(d, img_cid=None)
+    assert "prev 7d" in html and "last mo" in html   # week + month framing present
 
 
 def test_latest_day_is_always_estimated(tmp_path, fixtures_dir):

@@ -165,6 +165,7 @@ class LiveSource(Source):
             "uploads_playlist_id":
                 item.get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads"),
             "subscriber_count": int(sub_count) if sub_count is not None else None,
+            "handle": item.get("snippet", {}).get("customUrl"),
         }
 
     def _list_video_ids(self, channel: ChannelConfig, uploads_playlist_id: str) -> list[str]:
@@ -230,6 +231,7 @@ class LiveSource(Source):
             channel_title=info["title"],
             uploads_playlist_id=info["uploads_playlist_id"],
             subscriber_count=info.get("subscriber_count"),
+            channel_handle=info.get("handle"),
         )
 
         def hb(msg: str) -> None:
@@ -506,6 +508,7 @@ class LiveSource(Source):
             channel_title=info["title"],
             uploads_playlist_id=info["uploads_playlist_id"],
             subscriber_count=info.get("subscriber_count"),
+            channel_handle=info.get("handle"),
         )
 
         def hb(msg: str) -> None:

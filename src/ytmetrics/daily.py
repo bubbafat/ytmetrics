@@ -16,9 +16,11 @@ clears a fixed threshold.
 from __future__ import annotations
 
 import sqlite3
+from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
+from statistics import median
 
 from .freshness import stale_html_banner, stale_text_banner
 from .timeutil import today_pt
@@ -93,6 +95,25 @@ def _day_stats(c, day: str) -> dict:
     ).fetchone()
     rev = _val(c, "SELECT sum(estimated_revenue) FROM channel_revenue_daily WHERE date=?", (day,))
     return {"views": r[0], "mins": r[1], "net": r[2] - r[3], "rev": rev}
+
+
+def _channel_link(c) -> dict | None:
+    """The channel's display handle + URL for the footer. Prefers the stored @handle
+    (Data API customUrl); falls back to the title + /channel/<id> URL until a pull fills
+    the handle in. Returns None if there's no channel row yet."""
+    row = c.execute(
+        "SELECT channel_id, title, handle FROM channels "
+        "ORDER BY (subscriber_count IS NULL), subscriber_count DESC LIMIT 1").fetchone()
+    if not row:
+        return None
+    handle, title, cid = row["handle"], row["title"], row["channel_id"]
+    if handle:
+        display = handle if handle.startswith("@") else f"@{handle}"
+        url = f"https://www.youtube.com/{display}"
+    else:
+        display = title or cid
+        url = f"https://www.youtube.com/channel/{cid}"
+    return {"display": display, "url": url}
 
 
 def _series(c, days: list[str]) -> tuple[list[int], list[float]]:
@@ -171,6 +192,16 @@ def compute(db_path: str | Path, *, today=None, warn_days: int = 3) -> dict:
         # --- latest video ----------------------------------------------------------
         latest_video = _latest_video(c, latest, prev)
 
+        # --- this week / this month, vs the prior period ---------------------------
+        week = _week(c, latest_d)
+        month = _month(c, latest_d)
+
+        # --- when the data was last fetched ----------------------------------------
+        last_pull = _val(c, "SELECT max(last_successful_pull) FROM channels")
+
+        # --- channel identity (for the footer link) --------------------------------
+        channel = _channel_link(c)
+
         # --- 7-day sparklines ending at latest -------------------------------------
         spark_days = [(latest_d - timedelta(days=n)).isoformat() for n in range(6, -1, -1)]
         sv, sr = _series(c, spark_days)
@@ -193,6 +224,8 @@ def compute(db_path: str | Path, *, today=None, warn_days: int = 3) -> dict:
             "latest_estimated": _est(latest),
             "days_behind": days_behind,
             "stale": days_behind > warn_days,
+            "last_pull": last_pull,
+            "channel": channel,
             "recent_days": recent_days,
             "prev_date": prev,
             "baseline_days": len(present),
@@ -214,6 +247,8 @@ def compute(db_path: str | Path, *, today=None, warn_days: int = 3) -> dict:
             "traffic": traffic,
             "top_videos": top_videos,
             "latest_video": latest_video,
+            "week": week,
+            "month": month,
             "spark_views": sparkline(sv),
             "spark_views_vals": sv,
             "spark_rev": sparkline(sr),
@@ -288,11 +323,90 @@ def _latest_video(c, latest: str, prev: str) -> dict | None:
         trend = "flat"
     # A breakout: a meaningfully young video whose latest day clearly outpaces the prior day.
     breakout = days_since <= 14 and day_views >= max(25, 1.5 * prev_views) and prev_views > 0
+    vs_typical = _vs_typical(c, vid, pub, days_since, "VIDEO_ON_DEMAND", total)
     return {
         "title": v["title"], "day_views": day_views, "prev_views": prev_views,
         "total": total, "avp": avp or 0.0, "days_since": days_since,
-        "trend": trend, "breakout": breakout,
+        "trend": trend, "breakout": breakout, "vs_typical": vs_typical,
     }
+
+
+def _vs_typical(c, video_id: str, pub_date: str, days_since: int, content_type: str,
+                target_total: int) -> dict | None:
+    """Benchmark this video against the channel's *typical* video at the same age: the median
+    cumulative views other same-type videos had by day ``days_since``. Only videos that
+    actually reached that age count (so a 3-day-old video is compared to others' day-3 totals,
+    not their lifetimes). Returns None if fewer than 3 comparable videos — too thin to trust."""
+    if days_since < 1:
+        return None
+    rows = c.execute(
+        "SELECT vd.video_id vid, "
+        "CAST(julianday(vd.date) - julianday(substr(v.published_at,1,10)) AS INTEGER) age, "
+        "coalesce(vd.views,0) views "
+        "FROM video_daily vd JOIN videos v USING(video_id) "
+        "WHERE v.content_type=? AND vd.video_id<>?", (content_type, video_id)).fetchall()
+    cum: dict[str, int] = defaultdict(int)
+    maxage: dict[str, int] = defaultdict(int)
+    for r in rows:
+        age = r["age"]
+        if age is None:
+            continue
+        maxage[r["vid"]] = max(maxage[r["vid"]], age)
+        if 0 <= age <= days_since:
+            cum[r["vid"]] += r["views"]
+    reached = sorted(cum[v] for v in cum if maxage[v] >= days_since)
+    if len(reached) < 3:
+        return None
+    med = median(reached)
+    return {"median": med, "ahead": target_total >= med, "cohort": len(reached)}
+
+
+def _window_totals(c, days: list[str]) -> dict:
+    """Sum the four scoreboard metrics over a list of ISO dates (revenue None if none seen)."""
+    v = w = s = 0
+    rev = 0.0
+    has_rev = False
+    for d in days:
+        st = _day_stats(c, d)
+        v += st["views"]
+        w += st["mins"]
+        s += st["net"]
+        if st["rev"] is not None:
+            rev += st["rev"]
+            has_rev = True
+    return {"views": v, "watch_hours": w / 60.0, "net_subs": s,
+            "revenue": rev if has_rev else None}
+
+
+def _compare(this_t: dict, last_t: dict) -> dict:
+    """Per-metric {this, last, delta%} for two period totals (delta None if no base)."""
+    out = {}
+    for m in ("views", "watch_hours", "net_subs", "revenue"):
+        a, b = this_t[m], last_t[m]
+        out[m] = {"this": a, "last": b, "wow": _pct(a, b) if (a is not None and b) else None}
+    return out
+
+
+def _week(c, latest_d) -> dict:
+    """Trailing 7 days vs the prior 7 (this = latest-6..latest, last = latest-13..latest-7)."""
+    this_days = [(latest_d - timedelta(days=n)).isoformat() for n in range(6, -1, -1)]
+    last_days = [(latest_d - timedelta(days=n)).isoformat() for n in range(13, 6, -1)]
+    return _compare(_window_totals(c, this_days), _window_totals(c, last_days))
+
+
+def _month(c, latest_d) -> dict:
+    """Month-to-date vs the *same point* last month (a fair pace comparison): the 1st through
+    ``latest_d`` vs the 1st through the same day-count of the prior month (clamped if the prior
+    month is shorter)."""
+    first_this = latest_d.replace(day=1)
+    n = (latest_d - first_this).days                       # days after the 1st
+    this_days = [(first_this + timedelta(days=i)).isoformat() for i in range(n + 1)]
+    prev_last = first_this - timedelta(days=1)              # last day of previous month
+    first_last = prev_last.replace(day=1)
+    last_end = min(first_last + timedelta(days=n), prev_last)
+    cnt = (last_end - first_last).days + 1
+    last_days = [(first_last + timedelta(days=i)).isoformat() for i in range(cnt)]
+    return _compare(_window_totals(c, this_days), _window_totals(c, last_days))
 
 
 def _headline(d: dict) -> str:
@@ -464,6 +578,23 @@ def _body_blocks(digest: dict) -> list[list[str]]:
         rdb.append(f"  {_fmt_date(rd['date'])}  {rd['views']:>5,}  {rev:>8}{mark}")
     blocks.append(rdb)
 
+    # --- THIS WEEK / THIS MONTH (vs the prior period) --------------------------
+    def _period_block(heading: str, p: dict, period: str) -> list[str]:
+        def line(lbl: str, m: dict, val: str, last: str) -> str:
+            return f"  {lbl:<9} {val}  ({_fmt_pct(m['wow'])} vs {last} {period})"
+        out = [heading,
+               line("Views", p["views"], f"{p['views']['this']:,}", f"{p['views']['last']:,}"),
+               line("Watch", p["watch_hours"], f"{p['watch_hours']['this']:,.1f} hrs",
+                    f"{p['watch_hours']['last']:,.1f}"),
+               line("Subs", p["net_subs"], f"{p['net_subs']['this']:+d}",
+                    f"{p['net_subs']['last']:+d}")]
+        if p["revenue"]["this"] is not None:
+            out.append(line("Revenue", p["revenue"], _fmt_money(p["revenue"]["this"]),
+                            _fmt_money(p["revenue"]["last"])))
+        return out
+    blocks.append(_period_block("LAST 7 DAYS", d["week"], "prev 7d"))
+    blocks.append(_period_block("MONTH TO DATE", d["month"], "last mo"))
+
     # --- WHAT MOVED IT ---------------------------------------------------------
     wm = ["WHAT MOVED IT"]
     if d["top_videos"]:
@@ -483,6 +614,11 @@ def _body_blocks(digest: dict) -> list[list[str]]:
         lvb.append(f"  {title}")
         lvb.append(f"  {lv['day_views']:,} views that day · {lv['total']:,} total · "
                    f"{lv['avp']:.0f}% avg viewed · day {lv['days_since']} · {trend}")
+        vt = lv.get("vs_typical")
+        if vt:
+            word = "ahead of" if vt["ahead"] else "behind"
+            lvb.append(f"  {word} your typical video at day {lv['days_since']} "
+                       f"(median {vt['median']:,.0f})")
     else:
         lvb.append("  No videos found.")
     blocks.append(lvb)
@@ -513,8 +649,16 @@ def _body_blocks(digest: dict) -> list[list[str]]:
     blocks.append([_TREND_HEADING] + _trend_lines(d))
 
     # --- footer ----------------------------------------------------------------
+    tail = f"Rendered {_rendered_stamp()}"
+    pulled = _et_fmt(d.get("last_pull"))
+    if pulled:
+        tail += f" · data last pulled {pulled}"
+    ch = d.get("channel")
+    if ch:
+        tail += f" for {ch['display']} ({ch['url']})"
     blocks.append(
-        ["— ytmetrics daily digest. Recent days are YouTube estimates and will revise."]
+        ["— ytmetrics daily digest. Recent days are YouTube estimates and will revise.",
+         tail + "."]
     )
     return blocks
 
@@ -540,32 +684,207 @@ def render_text(digest: dict) -> tuple[str, str]:
     return _subject(digest), body
 
 
+# --- HTML rendering (native, mobile-first, brand palette) --------------------------
+# Palette duplicated from briefing.py on purpose: importing briefing would pull matplotlib
+# at module load, and the daily digest must work without the `briefing` extra.
+_NAVY = "#14304A"; _CREAM = "#F4EFE3"; _CORAL = "#F0824A"     # noqa: E702
+_MUTED = "#77899A"; _GOOD = "#1E8E5A"; _BAD = "#C5221F"       # noqa: E702
+_AMBER = "#9A6400"; _CARD = "#FFFFFF"; _LINE = "#E6DFCF"      # noqa: E702
+_FONT = "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+
+
+def _html_delta(pct: float | None, *, prefix: str = "") -> str:
+    """A small coloured ▲/▼ percentage span (green up, red down, muted flat/none)."""
+    if pct is None:
+        return f'<span style="color:{_MUTED};">{prefix}–</span>'
+    color = _GOOD if pct > 0 else _BAD if pct < 0 else _MUTED
+    arrow = "▲" if pct > 0 else "▼" if pct < 0 else "→"
+    return (f'<span style="color:{color};font-weight:600;white-space:nowrap;">'
+            f"{prefix}{arrow}{abs(pct) * 100:.0f}%</span>")
+
+
+def _stat_cell(label: str, value: str, secondary: str) -> str:
+    return (
+        f'<td width="50%" style="padding:10px 12px;vertical-align:top;">'
+        f'<div style="color:{_MUTED};font-size:11px;letter-spacing:.06em;'
+        f'text-transform:uppercase;">{label}</div>'
+        f'<div style="color:{_NAVY};font-size:26px;font-weight:700;line-height:1.1;'
+        f'margin:2px 0;">{value}</div>'
+        f'<div style="font-size:12px;color:{_MUTED};">{secondary}</div></td>'
+    )
+
+
+def _callout(digest: dict) -> str:
+    """The verdict/action box: red when stale, green for a good surge, amber for a concern,
+    a calm green line when nothing needs the owner."""
+    if digest.get("stale"):
+        return stale_html_banner(digest["latest_date"], digest["days_behind"])
+    if digest["status"] == "alert":
+        good = digest.get("alert_tone") == "good"
+        bg, border, icon = ((f"{_GOOD}14", _GOOD, "🟢") if good
+                            else (f"{_AMBER}14", _AMBER, "⚠️"))
+        from html import escape
+        return (
+            f'<div style="background:{bg};border-left:4px solid {border};'
+            f'border-radius:6px;padding:12px 14px;margin:0 0 14px;">'
+            f'<span style="font-size:15px;font-weight:700;color:{_NAVY};">'
+            f"{icon} {escape(digest['headline'])}</span></div>"
+        )
+    return (
+        f'<div style="background:{_GOOD}12;border-left:4px solid {_GOOD};'
+        f'border-radius:6px;padding:12px 14px;margin:0 0 14px;color:{_NAVY};'
+        f'font-size:15px;font-weight:600;">✅ Nothing needs you today.</div>'
+    )
+
+
+def _section_label(text: str) -> str:
+    return (f'<div style="color:{_CORAL};font-size:12px;font-weight:700;'
+            f'letter-spacing:.06em;text-transform:uppercase;margin:0 0 8px;">{text}</div>')
+
+
+def _period_lines(p: dict, period: str) -> str:
+    """The per-metric 'this X ▲n% vs last Y' lines shared by the week and month sections."""
+    def line(label: str, val: str, last: str, delta: str) -> str:
+        return (f'<div style="margin:3px 0;color:{_NAVY};font-size:14px;">'
+                f'<span style="display:inline-block;min-width:78px;color:{_MUTED};">'
+                f'{label}</span><span style="font-weight:600;">{val}</span> {delta} '
+                f'<span style="color:{_MUTED};font-size:13px;">vs {last} {period}</span></div>')
+    out = [
+        line("Views", f'{p["views"]["this"]:,}', f'{p["views"]["last"]:,}',
+             _html_delta(p["views"]["wow"])),
+        line("Watch hrs", f'{p["watch_hours"]["this"]:,.1f}', f'{p["watch_hours"]["last"]:,.1f}',
+             _html_delta(p["watch_hours"]["wow"])),
+        line("Net subs", f'{p["net_subs"]["this"]:+d}', f'{p["net_subs"]["last"]:+d}',
+             _html_delta(p["net_subs"]["wow"])),
+    ]
+    if p["revenue"]["this"] is not None:
+        out.append(line("Revenue", _fmt_money(p["revenue"]["this"]),
+                        _fmt_money(p["revenue"]["last"]), _html_delta(p["revenue"]["wow"])))
+    return "".join(out)
+
+
+_ET = "America/New_York"
+
+
+def _rendered_stamp() -> str:
+    """When this email was generated, in Eastern time (falls back to naive local)."""
+    try:
+        from zoneinfo import ZoneInfo
+        now, tz = datetime.now(ZoneInfo(_ET)), " ET"
+    except Exception:
+        now, tz = datetime.now(), ""
+    return now.strftime("%b %d, %Y %I:%M %p") + tz
+
+
+def _et_fmt(iso: str | None) -> str | None:
+    """Format a stored ISO pull timestamp (which carries a UTC offset) in Eastern time."""
+    if not iso:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.fromisoformat(iso).astimezone(ZoneInfo(_ET)).strftime(
+            "%b %d, %Y %I:%M %p") + " ET"
+    except Exception:
+        return iso
+
+
 def render_html(digest: dict, *, img_cid: str | None) -> str:
-    """The same plain-text body, wrapped in a dark-themed ``<pre>``. For the TREND (7d)
-    section only: if ``img_cid`` is given, swap the sparkline lines for an inline
-    ``<img src="cid:...">``; otherwise keep the text sparklines."""
+    """Native, mobile-first HTML digest on the brand palette. Answers, top to bottom:
+    the verdict/action callout, a scoreboard (yesterday), the week (chart + WoW), and the
+    latest video (pace, retention, vs. a typical video at the same age). The plain-text
+    ``render_text`` remains the fallback alternative."""
     from html import escape
 
-    parts: list[str] = []
-    for block in _body_blocks(digest):
-        if img_cid and block and block[0] == _TREND_HEADING:
-            heading = escape(block[0])
-            img = (f'<img src="cid:{escape(img_cid)}" alt="7-day trend chart" '
-                   'style="max-width:100%;height:auto;margin-top:6px;display:block;'
-                   'border-radius:6px;">')
-            parts.append(heading + "\n" + img)
-        else:
-            parts.append(escape("\n".join(block)))
-    inner = "\n\n".join(parts)
+    d = digest
+    fresh = "est." if d["latest_estimated"] else "final"
 
-    pre = (
-        '<pre style="background:#14304A;color:#F4EFE3;'
-        "font-family:'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;"
-        'font-size:13px;line-height:1.5;padding:16px;border-radius:8px;'
-        'white-space:pre-wrap;word-break:break-word;margin:0;">'
-        + inner
-        + "</pre>"
+    # --- latest day (scoreboard) ----------------------------------------------------
+    day_note = (f'<div style="color:{_MUTED};font-size:12px;margin:-4px 0 8px;">'
+                f'{_fmt_date(d["latest_date"])} · {fresh}</div>')
+    views_sec = f'd/d {_html_delta(d["views_dd"])} · 7d {_html_delta(d["views_v7"])}'
+    wk = d["week"]
+    watch_sec = f'wk {_html_delta(wk["watch_hours"]["wow"])}'
+    subs_wk = wk["net_subs"]["this"]
+    subs_sec = f'<span style="color:{_MUTED};">wk {subs_wk:+d}</span>'
+    if d["revenue"] is None:
+        rev_val = "—"
+        rev_sec = f'<span style="color:{_MUTED};">pre-monetization</span>'
+    else:
+        rev_val = _fmt_money(d["revenue"])
+        rev_sec = f'd/d {_html_delta(d["rev_dd"])} · 7d {_html_delta(d["rev_v7"])}'
+    scoreboard = (
+        _section_label("Latest day") + day_note
+        + f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="border:1px solid {_LINE};border-radius:8px;background:{_CARD};'
+        f'margin:0 0 16px;"><tr>'
+        + _stat_cell("Views", f'{d["views"]:,}', views_sec)
+        + _stat_cell("Watch hrs", f'{d["watch_hours"]:,.1f}', watch_sec)
+        + "</tr><tr>"
+        + _stat_cell("Net subs", f'{d["net_subs"]:+d}', subs_sec)
+        + _stat_cell("Revenue", rev_val, rev_sec)
+        + "</tr></table>"
     )
-    if digest.get("stale"):
-        pre = stale_html_banner(digest["latest_date"], digest["days_behind"]) + pre
-    return pre
+
+    # --- this week (chart + WoW lines) ---------------------------------------------
+    chart = ""
+    if img_cid:
+        chart = (f'<img src="cid:{escape(img_cid)}" alt="7-day trend" '
+                 f'style="width:100%;max-width:100%;height:auto;display:block;'
+                 f'border-radius:6px;margin:0 0 10px;">')
+
+    week_html = _section_label("Last 7 days") + chart + _period_lines(wk, "prev 7d")
+
+    # --- month to date (same layout, no chart) -------------------------------------
+    month_note = (f'<div style="color:{_MUTED};font-size:12px;margin:-4px 0 6px;">'
+                  f'vs the same point last month</div>')
+    month_html = _section_label("Month to date") + month_note + _period_lines(d["month"], "last mo")
+
+    # --- latest video ---------------------------------------------------------------
+    lv = d["latest_video"]
+    if lv:
+        trend_word = {"up": "climbing", "fading": "fading", "flat": "steady"}[lv["trend"]]
+        meta = (f'Day {lv["days_since"]} · {lv["total"]:,} views total · {trend_word}')
+        quality = f'Avg viewed {lv["avp"]:.0f}%'
+        vt = lv.get("vs_typical")
+        if vt:
+            word = "ahead of" if vt["ahead"] else "behind"
+            color = _GOOD if vt["ahead"] else _AMBER
+            quality += (f' · <span style="color:{color};font-weight:600;">{word}</span> '
+                        f'your typical video at day {lv["days_since"]} '
+                        f'(median {vt["median"]:,.0f})')
+        video_html = (
+            _section_label("Latest video")
+            + f'<div style="color:{_NAVY};font-size:15px;font-weight:700;margin:0 0 3px;">'
+            f'{escape(lv["title"])}</div>'
+            + f'<div style="color:{_MUTED};font-size:13px;margin:0 0 4px;">{meta}</div>'
+            + f'<div style="color:{_NAVY};font-size:14px;">{quality}</div>'
+        )
+    else:
+        video_html = _section_label("Latest video") + (
+            f'<div style="color:{_MUTED};font-size:14px;">No videos found.</div>')
+
+    tail = f"Rendered {_rendered_stamp()}"
+    pulled = _et_fmt(d.get("last_pull"))
+    if pulled:
+        tail += f" · data last pulled {pulled}"
+    ch = d.get("channel")
+    if ch:
+        link = (f'<a href="{escape(ch["url"])}" style="color:{_MUTED};'
+                f'text-decoration:underline;">{escape(ch["display"])}</a>')
+        tail += f" for {link}"
+    footer = (f'<div style="color:{_MUTED};font-size:11px;margin:18px 0 0;'
+              f'border-top:1px solid {_LINE};padding-top:10px;">'
+              f'Recent days are YouTube estimates and will revise.<br>'
+              f'{tail}.</div>')
+
+    return (
+        f'<div style="background:{_CREAM};padding:16px 0;font-family:{_FONT};">'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
+        f'<tr><td align="center" style="padding:0 12px;">'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="max-width:600px;text-align:left;">'
+        f'<tr><td>{_callout(d)}{scoreboard}{week_html}'
+        f'<div style="height:16px;"></div>{month_html}'
+        f'<div style="height:16px;"></div>{video_html}{footer}</td></tr>'
+        f'</table></td></tr></table></div>'
+    )

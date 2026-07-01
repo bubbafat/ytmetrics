@@ -49,10 +49,18 @@ def _v3_add_subscriber_count(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE channels ADD COLUMN subscriber_count INTEGER")
 
 
+def _v4_add_handle(conn: sqlite3.Connection) -> None:
+    """v4 adds ``handle`` (the @handle / Data API customUrl) to the channels dim. Populated
+    on the next pull; NULL until then (renderers fall back to the title link)."""
+    if not _column_exists(conn, "channels", "handle"):
+        conn.execute("ALTER TABLE channels ADD COLUMN handle TEXT")
+
+
 # Upgrade steps keyed by the version they produce. Empty for v1 (handled by _create_all).
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _v2_drop_renamed_channel_tables,
     3: _v3_add_subscriber_count,
+    4: _v4_add_handle,
 }
 
 

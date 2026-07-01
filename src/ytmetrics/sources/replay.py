@@ -64,6 +64,7 @@ class ReplaySource(Source):
             channel_title=meta.get("title"),
             uploads_playlist_id=meta.get("uploads_playlist_id"),
             subscriber_count=meta.get("subscriber_count"),
+            channel_handle=meta.get("handle"),
         )
 
         cd = _load(cdir / "channel_daily.json")
@@ -174,6 +175,7 @@ class ReplaySource(Source):
             channel_title=meta.get("title"),
             uploads_playlist_id=meta.get("uploads_playlist_id"),
             subscriber_count=meta.get("subscriber_count"),
+            channel_handle=meta.get("handle"),
         )
 
         if include_demographics:

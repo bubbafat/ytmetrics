@@ -59,6 +59,7 @@ def _store_batch(
                         "title": batch.channel_title,
                         "uploads_playlist_id": batch.uploads_playlist_id,
                         "subscriber_count": batch.subscriber_count,
+                        "handle": batch.channel_handle,
                     }
                 ],
                 pulled_at=pulled_at,
@@ -158,6 +159,7 @@ def _store_insights_batch(
                         "title": batch.channel_title,
                         "uploads_playlist_id": batch.uploads_playlist_id,
                         "subscriber_count": batch.subscriber_count,
+                        "handle": batch.channel_handle,
                     }
                 ],
                 pulled_at=pulled_at,

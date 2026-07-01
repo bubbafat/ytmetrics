@@ -38,6 +38,7 @@ class PullBatch:
     channel_title: str | None = None
     uploads_playlist_id: str | None = None
     subscriber_count: int | None = None  # current total from Data API channels.list (W7)
+    channel_handle: str | None = None  # @handle (Data API snippet.customUrl)
     videos: list[dict[str, Any]] = field(default_factory=list)
     tables: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     degraded: list[str] = field(default_factory=list)  # reports skipped/degraded
