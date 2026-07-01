@@ -22,9 +22,9 @@ insights_retention_weeks = 26       # keep ~6mo of windowed insight snapshots; 0
 [email]
 smtp_host = "smtp.gmail.com"
 smtp_port = 587
-username  = "robert.horvick@gmail.com"
-from      = "robert.horvick@gmail.com"
-to        = "robert.horvick@gmail.com"   # string or array of recipients
+username  = "you@example.com"
+from      = "you@example.com"
+to        = "you@example.com"   # string or array of recipients
 # password_env  = "YTMETRICS_SMTP_PASSWORD"   # default
 # password_file = "secrets/smtp_password"     # default fallback
 

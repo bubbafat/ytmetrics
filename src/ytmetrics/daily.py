@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import median
 
+from .channel import identity as channel_identity
 from .freshness import stale_html_banner, stale_text_banner
 from .timeutil import today_pt
 
@@ -98,24 +99,8 @@ def _day_stats(c, day: str) -> dict:
 
 
 def _channel_link(c) -> dict | None:
-    """The channel's display handle + URL for the footer. Prefers the stored @handle
-    (Data API customUrl); falls back to the title + /channel/<id> URL until a pull fills
-    the handle in. Returns None if there's no channel row yet."""
-    row = c.execute(
-        "SELECT channel_id, title, handle FROM channels "
-        "ORDER BY (subscriber_count IS NULL), subscriber_count DESC LIMIT 1").fetchone()
-    if not row:
-        return None
-    handle, title, cid = row["handle"], row["title"], row["channel_id"]
-    if handle:
-        display = handle if handle.startswith("@") else f"@{handle}"
-        url = f"https://www.youtube.com/{display}"
-    else:
-        display = title or cid
-        url = f"https://www.youtube.com/channel/{cid}"
-    # ``name`` is the human channel name for the subject line (title preferred); ``display``
-    # is the footer link text (the @handle when we have it).
-    return {"name": title or display, "display": display, "url": url}
+    """The channel's name / @handle / URL for the subject + footer (see channel.identity)."""
+    return channel_identity(c)
 
 
 def _channel_name(digest: dict) -> str:

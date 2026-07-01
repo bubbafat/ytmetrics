@@ -269,7 +269,7 @@ def cmd_insights(args) -> int:
 def cmd_briefing(args) -> int:
     config = _load(args)
     setup_logging(config.log_dir, config.log_level, args.verbose)
-    out = args.out or f"reports/empty-besters-briefing-{fmt_date(default_end_date())}.pdf"
+    out = args.out or f"reports/briefing-{fmt_date(default_end_date())}.pdf"
     from .briefing import generate
 
     try:
@@ -297,18 +297,20 @@ def cmd_briefing(args) -> int:
         if override:
             cfg = replace(cfg, recipients=override)
         from . import freshness
+        from .channel import identity
 
+        name = (identity(config.db_path) or {}).get("name") or "Your channel"
         stale, latest, n = freshness.is_stale(config.db_path, config.freshness_warn_days)
-        subject = f"Empty Besters — weekly briefing ({fmt_date(default_end_date())})"
-        body = "Your weekly Empty Besters channel briefing is attached.\n\n— ytmetrics"
+        subject = f"{name} — weekly briefing ({fmt_date(default_end_date())})"
+        body = f"Your weekly {name} channel briefing is attached.\n\n— ytmetrics"
         html_body = None
         if stale:
-            subject = f"Empty Besters 🔴 STALE ({n}d behind) — weekly briefing"
+            subject = f"{name} 🔴 STALE ({n}d behind) — weekly briefing"
             body = freshness.stale_text_banner(latest, n) + "\n\n" + body
             html_body = (
                 freshness.stale_html_banner(latest, n)
                 + "<p style=\"font-family:-apple-system,'Segoe UI',Roboto,sans-serif;"
-                "font-size:14px;\">Your weekly Empty Besters channel briefing is attached.</p>"
+                f"font-size:14px;\">Your weekly {name} channel briefing is attached.</p>"
             )
         sent = mailer.send_pdf(cfg, subject, body, path, html_body=html_body)
         get_logger().info("briefing emailed to %s (stale=%s)", sent, stale)
@@ -484,7 +486,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     br = add_sub("briefing", help="generate the weekly channel-intelligence PDF")
     br.add_argument("--out",
-                    help="output PDF path (default reports/empty-besters-briefing-DATE.pdf)")
+                    help="output PDF path (default reports/briefing-DATE.pdf)")
     br.add_argument("--weeks", type=int, default=1,
                     help="window size in weeks for the week-over-week deltas (default 1)")
     br.add_argument("--email", nargs="?", const=True, default=False,

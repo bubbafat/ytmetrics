@@ -29,7 +29,7 @@
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/robert/src/ytmetrics</string>
+  <string>/ABSOLUTE/PATH/TO/ytmetrics</string>
 
   <!-- Run weekly: Sundays (Weekday 0) at 07:00 local time, after the daily pull. -->
   <key>StartCalendarInterval</key>
@@ -40,9 +40,9 @@
   </dict>
 
   <key>StandardOutPath</key>
-  <string>/Users/robert/src/ytmetrics/logs/launchd.weekly.out</string>
+  <string>/ABSOLUTE/PATH/TO/ytmetrics/logs/launchd.weekly.out</string>
   <key>StandardErrorPath</key>
-  <string>/Users/robert/src/ytmetrics/logs/launchd.weekly.err</string>
+  <string>/ABSOLUTE/PATH/TO/ytmetrics/logs/launchd.weekly.err</string>
 
   <key>RunAtLoad</key>
   <false/>

@@ -7,7 +7,7 @@
     1. Edit the uv path / WorkingDirectory below if they differ.
     2. Create a Gmail App Password (Google Account → Security → 2-Step Verification →
        App passwords) and store it WITHOUT committing it:
-         echo 'your-app-password' > /Users/robert/src/ytmetrics/secrets/smtp_password
+         echo 'your-app-password' > /ABSOLUTE/PATH/TO/ytmetrics/secrets/smtp_password
        (secrets/ is gitignored). Or export YTMETRICS_SMTP_PASSWORD in the job's env.
     3. Add an [email] section to config.toml (see config.example.toml).
     4. cp this file to ~/Library/LaunchAgents/com.ytmetrics.briefing.plist (drop ".example")
@@ -26,11 +26,11 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/robert/src/ytmetrics/scripts/weekly_briefing.sh</string>
+    <string>/ABSOLUTE/PATH/TO/ytmetrics/scripts/weekly_briefing.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/robert/src/ytmetrics</string>
+  <string>/ABSOLUTE/PATH/TO/ytmetrics</string>
 
   <!-- Monday (Weekday 1) at 06:00 local time. -->
   <key>StartCalendarInterval</key>
@@ -41,9 +41,9 @@
   </dict>
 
   <key>StandardOutPath</key>
-  <string>/Users/robert/src/ytmetrics/logs/launchd.briefing.out</string>
+  <string>/ABSOLUTE/PATH/TO/ytmetrics/logs/launchd.briefing.out</string>
   <key>StandardErrorPath</key>
-  <string>/Users/robert/src/ytmetrics/logs/launchd.briefing.err</string>
+  <string>/ABSOLUTE/PATH/TO/ytmetrics/logs/launchd.briefing.err</string>
 
   <key>RunAtLoad</key>
   <false/>

@@ -108,8 +108,8 @@ class Deck:
         fig.text(0.06, 0.82, title, color=CREAM, fontsize=34, family=self.disp)
         fig.lines = []
 
-    def footer(self, fig, idx, total, sub):
-        fig.text(0.06, 0.05, "EMPTY BESTERS · WEEKLY BRIEFING", color=MUTED,
+    def footer(self, fig, idx, total, sub, name):
+        fig.text(0.06, 0.05, f"{name.upper()} · WEEKLY BRIEFING", color=MUTED,
                  fontsize=9, family=self.body)
         fig.text(0.94, 0.05, f"{sub}   ·   {idx}/{total}", color=MUTED, fontsize=9,
                  family=self.body, ha="right")
@@ -154,6 +154,9 @@ def generate(db_path: str | Path, out_path: str | Path, weeks: int = 1) -> Path:
     prev_lo = (mx_d - timedelta(days=2 * span - 1)).isoformat()
     cur, prev = _agg(c, this_lo, mx), _agg(c, prev_lo, prev_hi)
 
+    from .channel import identity
+    name = (identity(c) or {}).get("name") or "Your channel"
+
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     sub = f"{this_lo} → {mx}"
@@ -164,11 +167,11 @@ def generate(db_path: str | Path, out_path: str | Path, weeks: int = 1) -> Path:
             _p_cover, _p_scoreboard, _p_latest_video, _p_working,
             _p_audience, _p_monetization, _p_discovery, _p_actions,
         ]
-        ctx = dict(c=c, mx=mx, mon=mon, cur=cur, prev=prev, this_lo=this_lo, sub=sub)
+        ctx = dict(c=c, mx=mx, mon=mon, cur=cur, prev=prev, this_lo=this_lo, sub=sub, name=name)
         for i, fn in enumerate(pages, 1):
             fig = d.page()
             fn(d, fig, ctx)
-            d.footer(fig, i, len(pages), sub)
+            d.footer(fig, i, len(pages), sub, name)
             d.save(fig)
     c.close()
     return out_path
@@ -194,7 +197,7 @@ def _panel(fig, x, y, w, h):
 
 def _p_cover(d, fig, ctx):
     cur, prev = ctx["cur"], ctx["prev"]
-    fig.text(0.06, 0.86, "EMPTY BESTERS", color=SKY, fontsize=15, family=d.body,
+    fig.text(0.06, 0.86, ctx["name"].upper(), color=SKY, fontsize=15, family=d.body,
              fontweight="bold")
     fig.text(0.06, 0.78, "Weekly Channel\nBriefing", color=CREAM, fontsize=52,
              family=d.disp, linespacing=0.95, va="top")
@@ -209,8 +212,7 @@ def _p_cover(d, fig, ctx):
     # auto takeaway
     sub_dir = "accelerating" if cur["net"] >= prev["net"] else "cooling"
     view_dir = "up" if cur["views"] >= prev["views"] else "down"
-    tl = (f"Subs {sub_dir} (+{cur['net']} vs +{prev['net']}); views {view_dir}. "
-          f"Audience remains 55+/TV-first/search-led — design and title accordingly.")
+    tl = f"Subs {sub_dir} (+{cur['net']} vs +{prev['net']}); views {view_dir} week over week."
     fig.text(0.06, 0.15, "THE TAKEAWAY", color=CORAL, fontsize=12, family=d.body,
              fontweight="bold")
     fig.text(0.06, 0.105, tl, color=CREAM, fontsize=14, family=d.body, wrap=True)
@@ -445,8 +447,8 @@ def _p_discovery(d, fig, ctx):
         fig.text(0.70, y - 0.025, f"+{r['a'] - r['b']} views w/w", color=GREEN, fontsize=10,
                  family=d.body)
         y -= 0.075
-    fig.text(0.07, 0.14, "Search-led discovery: title to the specific ship/port people are "
-             "already searching — that's where the demand is.", color=MUTED, fontsize=12,
+    fig.text(0.07, 0.14, "Title to the specific terms people are already searching for — "
+             "that's where the demand is.", color=MUTED, fontsize=12,
              family=d.body)
 
 
@@ -470,7 +472,7 @@ def _p_actions(d, fig, ctx):
     terms = _rows(
         c, "SELECT detail FROM traffic_source_detail WHERE traffic_source_type="
         "'YT_SEARCH' AND window_end=? ORDER BY views DESC LIMIT 3", (wse,)) if wse else []
-    term_str = ", ".join(f"“{r['detail']}”" for r in terms) or "your top ship/port terms"
+    term_str = ", ".join(f"“{r['detail']}”" for r in terms) or "your top search terms"
 
     actions = []
     if cliff is not None:
@@ -482,12 +484,12 @@ def _p_actions(d, fig, ctx):
                         f"It converts {top[0]['spk']:.1f} subscribers per 1k views — your best. "
                         f"More of this format/topic compounds growth."))
     actions.append(("Title to the searches that already find you",
-                    f"Search is your #1 source. Lead titles with the specific ship/port: "
+                    f"Search is a top source. Lead titles with the specific terms people use: "
                     f"{term_str}."))
     if len(actions) < 3:
-        actions.append(("Design for a 65+ audience on a TV",
-                        "Nearly half watch on a television and the audience skews 55+ — bigger "
-                        "on-screen text and lean-back pacing."))
+        actions.append(("Keep a consistent publish cadence",
+                        "Regular uploads compound: they give the algorithm more to recommend "
+                        "and keep your audience coming back."))
     actions = actions[:3]
 
     top, H, gap = 0.72, 0.18, 0.025

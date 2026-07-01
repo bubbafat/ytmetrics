@@ -117,7 +117,7 @@ this model right and the queries follow; get it wrong and you'll silently mix in
 1. **Lifetime vs. monetized window.** `channel_daily` / `video_daily` span the channel's *entire
    life*; the revenue tables only start at *monetization*. To compute RPM or any "since we
    monetized" figure, **filter the daily tables to the monetized window**, e.g.
-   `date >= (SELECT MIN(date) FROM channel_revenue_daily)` (Empty Besters monetized `2026-06-03`).
+   `date >= (SELECT MIN(date) FROM channel_revenue_daily)` (the channel's first monetized day).
    Summing lifetime views against monetized revenue produces nonsense (a fraction-of-a-cent RPM).
 2. **Channel ≠ sum of videos.** Channel totals legitimately exceed the sum of per-video rows; use
    `v_revenue_attribution` and treat `unattributed_revenue` as real, not a bug.

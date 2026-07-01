@@ -50,7 +50,7 @@ CHANNELS = TableSpec(
         ("last_successful_pull", "TEXT"),
         ("data_through", "TEXT"),
         ("subscriber_count", "INTEGER"),
-        ("handle", "TEXT"),  # the @handle (Data API snippet.customUrl), e.g. "@EmptyBesters"
+        ("handle", "TEXT"),  # the @handle (Data API snippet.customUrl), e.g. "@yourchannel"
     ],
     pk=["channel_id"],
 )

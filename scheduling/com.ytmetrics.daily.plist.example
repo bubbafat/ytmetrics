@@ -25,7 +25,7 @@
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/robert/src/ytmetrics</string>
+  <string>/ABSOLUTE/PATH/TO/ytmetrics</string>
 
   <!-- Run every day at 06:30 local time. -->
   <key>StartCalendarInterval</key>
@@ -35,9 +35,9 @@
   </dict>
 
   <key>StandardOutPath</key>
-  <string>/Users/robert/src/ytmetrics/logs/launchd.out</string>
+  <string>/ABSOLUTE/PATH/TO/ytmetrics/logs/launchd.out</string>
   <key>StandardErrorPath</key>
-  <string>/Users/robert/src/ytmetrics/logs/launchd.err</string>
+  <string>/ABSOLUTE/PATH/TO/ytmetrics/logs/launchd.err</string>
 
   <key>RunAtLoad</key>
   <false/>
