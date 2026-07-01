@@ -8,14 +8,19 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0  # full history so gitleaks can scan commits
 
-      - name: Scan for secrets
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+      # Run the gitleaks CLI directly instead of gitleaks/gitleaks-action@v2.
+      # The action now requires a GITLEAKS_LICENSE key (and pins a deprecated Node 20
+      # runtime); the CLI is MIT-licensed and needs no key. Non-zero exit = leak found.
+      - name: Scan for secrets (gitleaks CLI)
+        run: |
+          ver=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${ver}/gitleaks_${ver}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks detect --source . --redact --no-banner
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5

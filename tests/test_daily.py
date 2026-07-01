@@ -46,7 +46,7 @@ def test_render_text_subject_and_body(tmp_path, fixtures_dir):
     # today close to the fixture's latest day -> not stale, normal verdict path
     subject, body = daily.render_text(
         daily.compute(_populated_db(tmp_path, fixtures_dir), today=date(2026, 6, 5)))
-    assert subject.startswith("Empty Besters")
+    assert ":" in subject                                 # "<name> <icon> <day>: <verdict>"
     assert any(i in subject for i in ("✅", "⚠️", "🟢"))   # 🟢 = good surge
     assert "LATEST DAY" in body
     assert "RECENT DAYS" in body
@@ -108,6 +108,47 @@ def test_render_html_shows_week_and_vs_typical(tmp_path):
     assert d["latest_video"]["vs_typical"] is None or "median" in d["latest_video"]["vs_typical"]
     html = daily.render_html(d, img_cid=None)
     assert "prev 7d" in html and "last mo" in html   # week + month framing present
+
+
+def test_day_one_no_analytics_degrades_gracefully(tmp_path):
+    # A brand-new channel: channels row exists (from the first pull) but zero analytics rows.
+    import sqlite3
+
+    from ytmetrics.store.sqlite_store import SqliteStore
+    db = tmp_path / "t.db"
+    with SqliteStore(db):
+        pass
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO channels (channel_id, title, handle) VALUES (?,?,?)",
+                 ("UCnew", "Brand New Channel", "@newbie"))
+    conn.commit()
+    conn.close()
+    d = daily.compute(db, today=date(2026, 7, 1))    # must NOT raise
+    assert d["no_data"] is True
+    subject, body = daily.render_text(d)
+    assert subject == "Brand New Channel ✅ warming up — no analytics yet"   # dynamic name
+    assert "warming up" in body.lower()
+    assert daily.chart_png(d) is None                # no chart without data
+    html = daily.render_html(d, img_cid="trend")
+    assert html.startswith("<div") and "Warming up" in html
+    assert "@newbie" in html                         # footer channel link still present
+
+
+def test_subject_uses_dynamic_channel_name(tmp_path):
+    import sqlite3
+
+    from ytmetrics.store.sqlite_store import SqliteStore
+    db = tmp_path / "t.db"
+    with SqliteStore(db):
+        pass
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO channels (channel_id, title) VALUES ('UC','Some Other Channel')")
+    conn.execute("INSERT INTO channel_daily (channel_id, date, creator_content_type, views) "
+                 "VALUES ('UC','2026-06-28','VIDEO_ON_DEMAND',10)")
+    conn.commit()
+    conn.close()
+    subject, _ = daily.render_text(daily.compute(db, today=date(2026, 6, 30)))
+    assert subject.startswith("Some Other Channel ")   # not hardcoded "Empty Besters"
 
 
 def test_latest_day_is_always_estimated(tmp_path, fixtures_dir):

@@ -113,7 +113,14 @@ def _channel_link(c) -> dict | None:
     else:
         display = title or cid
         url = f"https://www.youtube.com/channel/{cid}"
-    return {"display": display, "url": url}
+    # ``name`` is the human channel name for the subject line (title preferred); ``display``
+    # is the footer link text (the @handle when we have it).
+    return {"name": title or display, "display": display, "url": url}
+
+
+def _channel_name(digest: dict) -> str:
+    ch = digest.get("channel")
+    return ch["name"] if ch and ch.get("name") else "Your channel"
 
 
 def _series(c, days: list[str]) -> tuple[list[int], list[float]]:
@@ -133,7 +140,14 @@ def compute(db_path: str | Path, *, today=None, warn_days: int = 3) -> dict:
     try:
         latest = _val(c, "SELECT max(date) FROM channel_daily")
         if not latest:
-            raise RuntimeError("no channel_daily data in db — run `ytmetrics pull` first")
+            # Day-1 reality: a brand-new channel (or a fresh install) has no analytics yet —
+            # YouTube's Analytics API lags ~2-3 days. Degrade to a calm "warming up" digest
+            # instead of crashing the scheduled email job.
+            return {
+                "no_data": True,
+                "channel": _channel_link(c),
+                "last_pull": _val(c, "SELECT max(last_successful_pull) FROM channels"),
+            }
         latest_d = datetime.strptime(latest, "%Y-%m-%d").date()
         today_d = today or today_pt()
         days_behind = (today_d - latest_d).days
@@ -488,6 +502,8 @@ def chart_png(digest: dict) -> bytes | None:
     """Render the 7-day trend (views=coral line, revenue=sky line on a 2nd axis) as a
     compact, mobile-friendly PNG on a navy background. Returns PNG bytes, or ``None`` if
     matplotlib isn't installed (daily must work without the ``briefing`` extra)."""
+    if digest.get("no_data") or not digest.get("spark_views_vals"):
+        return None
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -649,33 +665,42 @@ def _body_blocks(digest: dict) -> list[list[str]]:
     blocks.append([_TREND_HEADING] + _trend_lines(d))
 
     # --- footer ----------------------------------------------------------------
-    tail = f"Rendered {_rendered_stamp()}"
-    pulled = _et_fmt(d.get("last_pull"))
-    if pulled:
-        tail += f" · data last pulled {pulled}"
-    ch = d.get("channel")
-    if ch:
-        tail += f" for {ch['display']} ({ch['url']})"
     blocks.append(
         ["— ytmetrics daily digest. Recent days are YouTube estimates and will revise.",
-         tail + "."]
+         _footer_text_tail(d) + "."]
     )
     return blocks
 
 
 def _subject(d: dict) -> str:
     """The verdict, readable from the lock screen. 🔴 stale · 🟢 good surge · ⚠️ concerning ·
-    ✅ normal."""
+    ✅ normal. The channel name is dynamic (from the stored channel record)."""
+    name = _channel_name(d)
+    if d.get("no_data"):
+        return f"{name} ✅ warming up — no analytics yet"
     if d.get("stale"):
-        return f"Empty Besters 🔴 STALE ({d['days_behind']}d behind) — data not updating"
+        return f"{name} 🔴 STALE ({d['days_behind']}d behind) — data not updating"
     day = _fmt_date(d["latest_date"])
     if d["status"] == "alert":
         icon = "🟢" if d.get("alert_tone") == "good" else "⚠️"
-        return f"Empty Besters {icon} {day}: {d['headline']}"
-    return f"Empty Besters ✅ {day}: {d['views']:,} views, {_fmt_money(d['revenue'])}"
+        return f"{name} {icon} {day}: {d['headline']}"
+    return f"{name} ✅ {day}: {d['views']:,} views, {_fmt_money(d['revenue'])}"
+
+
+def _no_data_body_lines() -> list[str]:
+    return [
+        "No analytics yet — the channel is still warming up.",
+        "",
+        "YouTube's Analytics API lags about 2–3 days, so the first numbers land here within",
+        "a few days of activity. Nothing needed from you — this email will fill in on its own.",
+    ]
 
 
 def render_text(digest: dict) -> tuple[str, str]:
+    if digest.get("no_data"):
+        body = "\n".join(_no_data_body_lines())
+        body += "\n\n— ytmetrics daily digest.\n" + _footer_text_tail(digest) + "."
+        return _subject(digest), body
     blocks = _body_blocks(digest)
     body = "\n\n".join("\n".join(block) for block in blocks)
     if digest.get("stale"):
@@ -788,6 +813,55 @@ def _et_fmt(iso: str | None) -> str | None:
         return iso
 
 
+def _footer_text_tail(d: dict) -> str:
+    """'Rendered … · data last pulled … for <channel> (<url>)' — plain-text footer line."""
+    tail = f"Rendered {_rendered_stamp()}"
+    pulled = _et_fmt(d.get("last_pull"))
+    if pulled:
+        tail += f" · data last pulled {pulled}"
+    ch = d.get("channel")
+    if ch:
+        tail += f" for {ch['display']} ({ch['url']})"
+    return tail
+
+
+def _footer_html_tail(d: dict) -> str:
+    """Same footer line for HTML, with the channel as a muted underlined link."""
+    from html import escape
+    tail = f"Rendered {_rendered_stamp()}"
+    pulled = _et_fmt(d.get("last_pull"))
+    if pulled:
+        tail += f" · data last pulled {pulled}"
+    ch = d.get("channel")
+    if ch:
+        link = (f'<a href="{escape(ch["url"])}" style="color:{_MUTED};'
+                f'text-decoration:underline;">{escape(ch["display"])}</a>')
+        tail += f" for {link}"
+    return tail
+
+
+def _no_data_html(d: dict) -> str:
+    """The day-1 'warming up' HTML digest (no analytics rows yet)."""
+    callout = (f'<div style="background:{_GOOD}12;border-left:4px solid {_GOOD};'
+               f'border-radius:6px;padding:12px 14px;margin:0 0 14px;color:{_NAVY};'
+               f'font-size:15px;font-weight:600;">✅ Warming up — no analytics yet.</div>')
+    msg = ("<p style=\"margin:0 0 8px;\">YouTube's Analytics API lags about 2–3 days, so the "
+           "first numbers land here within a few days of activity.</p>"
+           "<p style=\"margin:0;\">Nothing needed from you — this email will fill in on its "
+           "own.</p>")
+    footer = (f'<div style="color:{_MUTED};font-size:11px;margin:18px 0 0;'
+              f'border-top:1px solid {_LINE};padding-top:10px;">{_footer_html_tail(d)}.</div>')
+    return (
+        f'<div style="background:{_CREAM};padding:16px 0;font-family:{_FONT};">'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
+        f'<tr><td align="center" style="padding:0 12px;">'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="max-width:600px;text-align:left;"><tr><td>'
+        f'{callout}<div style="color:{_NAVY};font-size:14px;">{msg}</div>{footer}'
+        f'</td></tr></table></td></tr></table></div>'
+    )
+
+
 def render_html(digest: dict, *, img_cid: str | None) -> str:
     """Native, mobile-first HTML digest on the brand palette. Answers, top to bottom:
     the verdict/action callout, a scoreboard (yesterday), the week (chart + WoW), and the
@@ -796,6 +870,8 @@ def render_html(digest: dict, *, img_cid: str | None) -> str:
     from html import escape
 
     d = digest
+    if d.get("no_data"):
+        return _no_data_html(d)
     fresh = "est." if d["latest_estimated"] else "final"
 
     # --- latest day (scoreboard) ----------------------------------------------------
@@ -863,19 +939,10 @@ def render_html(digest: dict, *, img_cid: str | None) -> str:
         video_html = _section_label("Latest video") + (
             f'<div style="color:{_MUTED};font-size:14px;">No videos found.</div>')
 
-    tail = f"Rendered {_rendered_stamp()}"
-    pulled = _et_fmt(d.get("last_pull"))
-    if pulled:
-        tail += f" · data last pulled {pulled}"
-    ch = d.get("channel")
-    if ch:
-        link = (f'<a href="{escape(ch["url"])}" style="color:{_MUTED};'
-                f'text-decoration:underline;">{escape(ch["display"])}</a>')
-        tail += f" for {link}"
     footer = (f'<div style="color:{_MUTED};font-size:11px;margin:18px 0 0;'
               f'border-top:1px solid {_LINE};padding-top:10px;">'
               f'Recent days are YouTube estimates and will revise.<br>'
-              f'{tail}.</div>')
+              f'{_footer_html_tail(d)}.</div>')
 
     return (
         f'<div style="background:{_CREAM};padding:16px 0;font-family:{_FONT};">'
